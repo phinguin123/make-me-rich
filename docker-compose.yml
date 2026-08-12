@@ -1,0 +1,48 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Production: pre-built images, no source mounts, Nginx serves the React SPA.
+# Usage: docker compose up --build
+# ─────────────────────────────────────────────────────────────────────────────
+name: kiwoom-dashboard
+
+services:
+  # ── Python trading engine + Kiwoom WebSocket bridge ──────────────────────
+  backend:
+    build:
+      context: ./backend
+      target: production
+    env_file: .env
+    environment:
+      APP_KEY:      ${APP_KEY}
+      APP_SECRET:   ${APP_SECRET}
+      TARGET_TICKER: ${TARGET_TICKER:-044450}
+      HOST:         0.0.0.0
+      PORT:         "8000"
+    expose:
+      - "8000"
+    networks:
+      - app-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── React SPA served by Nginx + reverse-proxy to backend ─────────────────
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app-net
+    restart: unless-stopped
+
+networks:
+  app-net:
+    driver: bridge

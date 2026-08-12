@@ -1,0 +1,20 @@
+# ── Web framework + ASGI server ───────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0      # includes uvloop + httptools for performance
+
+# ── WebSocket / async I/O ─────────────────────────────────────────────────────
+websockets>=12.0
+
+# ── Serialisation ─────────────────────────────────────────────────────────────
+orjson>=3.10.0                 # faster JSON; used by FastAPI automatically
+
+# ── Config / environment ──────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+pydantic-settings>=2.2.0       # typed settings via environment variables
+
+# ── Vendored Kiwoom 0.2.9 runtime dependencies ────────────────────────────────
+# The backend uses ./kiwoom copied from the existing working local environment.
+# Do not install PyPI `kiwoom` here: that is a different PyQt/OpenAPI+ package.
+aiohttp>=3.9.0
+msgspec>=0.18.0
+pandas>=2.2.0

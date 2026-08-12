@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Development: hot-reload for both React (Vite HMR) and Python (uvicorn --reload).
+# Usage: docker compose -f docker-compose.dev.yml up --build
+# ─────────────────────────────────────────────────────────────────────────────
+name: kiwoom-dashboard-dev
+
+services:
+  backend:
+    build:
+      context: ./backend
+      target: development
+    volumes:
+      # Mount source so uvicorn --reload picks up edits immediately.
+      - ./backend:/app
+    env_file: .env
+    environment:
+      APP_KEY:       ${APP_KEY:-DUMMY_KEY}
+      APP_SECRET:    ${APP_SECRET:-DUMMY_SECRET}
+      TARGET_TICKER: ${TARGET_TICKER:-044450}
+      KIWOOM_DUMMY:  ${KIWOOM_DUMMY:-true}  # set KIWOOM_DUMMY=false in .env for live Kiwoom
+      HOST:          0.0.0.0
+      PORT:          "8000"
+      RELOAD:        "true"
+    ports:
+      # Expose directly so the browser can reach ws://localhost:8000/ws
+      # during local development (Vite proxy handles it in the container).
+      - "8000:8000"
+    networks:
+      - app-net-dev
+
+  frontend:
+    build:
+      context: ./frontend
+      target: development
+    volumes:
+      # Mount source for Vite HMR; keep node_modules inside container.
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      # Browser connects to ws://localhost:5173/ws; Vite proxies it to backend:8000.
+      # `backend` is a Docker DNS name and is not resolvable from the host browser.
+      VITE_BACKEND_ORIGIN: http://backend:8000
+      # Docker Desktop on Windows can miss native fs events from bind mounts.
+      # Polling keeps Vite HMR reliable for src/css edits without rebuilding.
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "250"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    networks:
+      - app-net-dev
+
+networks:
+  app-net-dev:
+    driver: bridge

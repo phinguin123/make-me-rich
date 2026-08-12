@@ -1,0 +1,398 @@
+/*
+ * OrderBook.css — Toss Securities MTS-style order book
+ *
+ * Design tokens:
+ *   --ob-red      Korean market Ask / 매도 colour  (#f04452)
+ *   --ob-blue     Korean market Bid / 매수 colour  (#3182f6)
+ *   --ob-bg       Card background                  (#ffffff)
+ *   --ob-surface  Row background                   (#fafafa)
+ *   --ob-border   Subtle dividers                  (#f0f0f0)
+ *   --ob-text     Primary text                     (#191f28)
+ *   --ob-muted    Secondary text                   (#8b95a1)
+ *
+ * Typography: Pretendard → Inter → system-ui (tabular numerals for alignment)
+ */
+
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+.ob-container {
+  --ob-red:        #f04452;
+  --ob-red-light:  rgba(240, 68, 82, 0.10);
+  --ob-red-flash:  rgba(240, 68, 82, 0.28);
+  --ob-blue:       #3182f6;
+  --ob-blue-light: rgba(49, 130, 246, 0.10);
+  --ob-blue-flash: rgba(49, 130, 246, 0.28);
+  --ob-green:      #00b761;
+
+  --ob-bg:      #ffffff;
+  --ob-surface: #fafafa;
+  --ob-border:  #f0f0f0;
+  --ob-text:    #191f28;
+  --ob-muted:   #8b95a1;
+  --ob-dim:     #c5cdd6;
+
+  --ob-row-h:    36px;
+  --ob-font:     "Pretendard", "Inter", system-ui, -apple-system, sans-serif;
+  --ob-mono:     "Pretendard", "Inter", ui-monospace, "SF Mono", monospace;
+  --ob-radius:   12px;
+  --ob-shadow:   0 1px 6px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
+
+  /* Grid columns: [ask-volume] [price] [bid-volume]  */
+  --ob-col-vol:   1fr;
+  --ob-col-price: 108px;
+}
+
+/* ── Container ─────────────────────────────────────────────────────────────── */
+.ob-container {
+  font-family: var(--ob-font);
+  font-feature-settings: "tnum" 1;   /* tabular numerals — keeps columns stable */
+  background: var(--ob-bg);
+  border-radius: var(--ob-radius);
+  box-shadow: var(--ob-shadow);
+  overflow: hidden;
+  width: 100%;
+  max-width: 420px;            /* optimal mobile width */
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+}
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+.ob-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--ob-border);
+}
+
+.ob-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ob-stock-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ob-text);
+  letter-spacing: -0.3px;
+}
+
+.ob-status {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.2px;
+}
+
+.ob-status--live {
+  background: rgba(0, 183, 97, 0.12);
+  color: var(--ob-green);
+}
+
+.ob-status--disconnected {
+  background: rgba(139, 149, 161, 0.12);
+  color: var(--ob-muted);
+}
+
+.ob-hora-time {
+  font-size: 12px;
+  color: var(--ob-muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4px;
+}
+
+/* ── Column headers ─────────────────────────────────────────────────────────── */
+.ob-col-headers {
+  display: grid;
+  grid-template-columns: var(--ob-col-vol) var(--ob-col-price) var(--ob-col-vol);
+  padding: 6px 0 4px;
+  border-bottom: 1px solid var(--ob-border);
+}
+
+.ob-col-hdr {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ob-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 10px;
+}
+
+.ob-col-hdr--ask  { text-align: right; color: var(--ob-red);  }
+.ob-col-hdr--price{ text-align: center; }
+.ob-col-hdr--bid  { text-align: left;  color: var(--ob-blue); }
+
+/* ── Book body ──────────────────────────────────────────────────────────────── */
+.ob-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.ob-side {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Row ────────────────────────────────────────────────────────────────────── */
+.ob-row {
+  display: grid;
+  grid-template-columns: var(--ob-col-vol) var(--ob-col-price) var(--ob-col-vol);
+  height: var(--ob-row-h);
+  align-items: center;
+  position: relative;
+  transition: background-color 0.15s ease;
+}
+
+.ob-row:hover {
+  background: var(--ob-surface);
+}
+
+/* Flash keyframes */
+@keyframes ob-flash-ask {
+  0%   { background-color: var(--ob-red-flash);  }
+  100% { background-color: transparent; }
+}
+
+@keyframes ob-flash-bid {
+  0%   { background-color: var(--ob-blue-flash); }
+  100% { background-color: transparent; }
+}
+
+.ob-row--flash.ob-row--flash-ask {
+  animation: ob-flash-ask 280ms ease-out forwards;
+}
+
+.ob-row--flash.ob-row--flash-bid {
+  animation: ob-flash-bid 280ms ease-out forwards;
+}
+
+/* ── Cells ──────────────────────────────────────────────────────────────────── */
+.ob-cell {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ob-slot-empty {
+  /* Empty placeholder cell keeps the 3-column grid intact */
+}
+
+/* ── Price cell ─────────────────────────────────────────────────────────────── */
+.ob-price {
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.3px;
+  z-index: 1;
+}
+
+.ob-price--ask { color: var(--ob-red);  }
+.ob-price--bid { color: var(--ob-blue); }
+
+/* ── Volume cell ────────────────────────────────────────────────────────────── */
+.ob-volume {
+  position: relative;   /* depth bar is absolutely positioned inside */
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ob-text);
+  z-index: 1;
+}
+
+.ob-volume--ask { justify-content: flex-end; }
+.ob-volume--bid { justify-content: flex-start; }
+
+/* ── Depth bars ──────────────────────────────────────────────────────────────
+ *
+ *  Ask side: bar anchored to the RIGHT (price side), grows leftward.
+ *            → right: 0; width: X%
+ *  Bid side: bar anchored to the LEFT  (price side), grows rightward.
+ *            → left: 0;  width: X%
+ *
+ *  This creates a visual "tunnel" widening away from the spread for deep levels.
+ * ─────────────────────────────────────────────────────────────────────────── */
+.ob-depth {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  border-radius: 2px;
+  transition: width 120ms ease-out;
+}
+
+.ob-depth--ask {
+  right: 0;
+  background: var(--ob-red-light);
+}
+
+.ob-depth--bid {
+  left: 0;
+  background: var(--ob-blue-light);
+}
+
+/* ── Volume text (above depth bar) ─────────────────────────────────────────── */
+.ob-volume-text {
+  position: relative;
+  z-index: 1;
+  white-space: nowrap;
+}
+
+.ob-volume-text--ask {
+  padding-right: 10px;
+  color: var(--ob-text);
+}
+
+.ob-volume-text--bid {
+  padding-left: 10px;
+  color: var(--ob-text);
+}
+
+/* Rank 1 (best price) rows get slightly bolder volume text */
+.ob-side--ask .ob-row:last-child  .ob-volume-text,
+.ob-side--bid .ob-row:first-child .ob-volume-text {
+  font-weight: 700;
+  color: var(--ob-text);
+}
+
+/* ── Spread indicator ────────────────────────────────────────────────────────── */
+.ob-spread {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 16px;
+  background: var(--ob-surface);
+  border-top:    1px solid var(--ob-border);
+  border-bottom: 1px solid var(--ob-border);
+}
+
+.ob-spread-bar {
+  display: flex;
+  width: 100%;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--ob-dim);
+}
+
+.ob-spread-fill {
+  height: 100%;
+  transition: width 200ms ease-out;
+}
+
+.ob-spread-fill--ask { background: var(--ob-red);  }
+.ob-spread-fill--bid { background: var(--ob-blue); }
+
+.ob-spread-label {
+  font-size: 10px;
+  color: var(--ob-muted);
+  letter-spacing: 0.3px;
+}
+
+/* ── Totals footer ────────────────────────────────────────────────────────────── */
+.ob-totals {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--ob-border);
+}
+
+.ob-total {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ob-total--ask { align-items: flex-end; text-align: right; }
+.ob-total--bid { align-items: flex-start; text-align: left; }
+
+.ob-total-label {
+  font-size: 10px;
+  color: var(--ob-muted);
+  font-weight: 500;
+}
+
+.ob-total-value {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ob-total--ask .ob-total-value { color: var(--ob-red);  }
+.ob-total--bid .ob-total-value { color: var(--ob-blue); }
+
+/* Ratio bar + percentage labels */
+.ob-total-ratio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 80px;
+}
+
+.ob-ratio-bar {
+  display: flex;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--ob-dim);
+}
+
+.ob-ratio-fill {
+  height: 100%;
+  transition: width 300ms ease-out;
+}
+
+.ob-ratio-fill--ask { background: var(--ob-red);  }
+.ob-ratio-fill--bid { background: var(--ob-blue); }
+
+.ob-ratio-pcts {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.ob-ratio-pct {
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ob-ratio-pct--ask { color: var(--ob-red);  }
+.ob-ratio-pct--bid { color: var(--ob-blue); }
+
+/* ── Responsive / dark-mode overrides ─────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  .ob-container {
+    --ob-bg:      #1a1d27;
+    --ob-surface: #22263a;
+    --ob-border:  #2d3148;
+    --ob-text:    #e2e8f0;
+    --ob-muted:   #6b7280;
+    --ob-dim:     #3d4261;
+    --ob-shadow:  0 1px 6px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255,255,255,0.04);
+
+    /* Slightly brighter tints for dark backgrounds */
+    --ob-red-light:  rgba(240, 68, 82, 0.14);
+    --ob-blue-light: rgba(49, 130, 246, 0.14);
+  }
+}
+
+/* Narrow screens / mobile-first adjustments */
+@media (max-width: 360px) {
+  .ob-container {
+    --ob-row-h:    32px;
+    --ob-col-price: 90px;
+  }
+
+  .ob-price      { font-size: 12px; }
+  .ob-volume     { font-size: 11px; }
+  .ob-stock-name { font-size: 14px; }
+}

@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Global resets / defaults ─────────────────────────────────────────────── */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    /* Smooth scrolling; respect user motion preferences */
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: 0.01ms !important; }
+  }
+
+  body {
+    @apply bg-surface text-content-primary;
+    font-family: theme("fontFamily.sans");
+    -webkit-font-smoothing:  antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100dvh;
+  }
+
+  /* Tabular numerals everywhere financial data may appear */
+  .font-tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ── Scrollbar (Webkit) ──────────────────────────────────────────────────── */
+@layer utilities {
+  ::-webkit-scrollbar          { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track    { @apply bg-surface; }
+  ::-webkit-scrollbar-thumb    { @apply rounded-full bg-surface-border; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-content-muted; }
+}

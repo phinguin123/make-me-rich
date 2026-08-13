@@ -21,6 +21,19 @@ Credentials live in `.env` (copy from `.env.example`). Do not hardcode keys.
 US tools also need `ALPACA_API_KEY` and `ALPACA_API_SECRET` in `.env`.
 KRX scrapers read `session_data.json` at the repo root.
 
+## Python setup
+
+There is no checked-in virtualenv. Create one in the repo:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+The FastAPI dashboard can also run via Docker (`backend/requirements.txt`) without this venv.
+The React UI is separate: `cd frontend && npm install`.
+
 ## Dashboard (Kiwoom order book)
 
 ```bash

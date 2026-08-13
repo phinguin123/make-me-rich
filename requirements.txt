@@ -1,0 +1,34 @@
+# Local Python tools (screeners, VCP scanner, PyQt tape, FastAPI backend).
+# Do NOT pip-install `kiwoom` from PyPI — this repo vendors backend/kiwoom.
+#
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+
+# ── Data / screeners ──────────────────────────────────────────────────────────
+numpy>=1.26.0
+pandas>=2.2.0
+pyarrow>=15.0.0
+tqdm>=4.66.0
+requests>=2.31.0
+tabulate>=0.9.0
+finance-datareader>=0.9.90
+
+# ── US brokers ────────────────────────────────────────────────────────────────
+alpaca-py>=0.21.0
+
+# ── Kiwoom REST / FastAPI dashboard (backend/) ───────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+websockets>=12.0
+orjson>=3.10.0
+python-dotenv>=1.0.0
+pydantic-settings>=2.2.0
+aiohttp>=3.9.0
+msgspec>=0.18.0
+
+# ── Live PyQt tape (apps/foreign_trend/) ──────────────────────────────────────
+PyQt5>=5.15.0
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+pytest>=8.0.0

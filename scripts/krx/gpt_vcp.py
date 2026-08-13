@@ -1,3 +1,5 @@
+import _paths
+from _paths import OUTPUT_DIR
 import FinanceDataReader as fdr
 import pandas as pd
 import numpy as np
@@ -7,7 +9,7 @@ from tqdm import tqdm
 import logging
 import os
 
-logging.basicConfig(filename='scanner_errors.log', level=logging.WARNING)
+logging.basicConfig(filename=str(OUTPUT_DIR / 'scanner_errors.log'), level=logging.WARNING)
 
 def get_korean_universe():
     df = fdr.StockListing('KRX')

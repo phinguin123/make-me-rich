@@ -1,3 +1,5 @@
+from pathlib import Path
+
 # ============================================================
 #  config.py  —  Single source of truth for all tunable knobs
 #
@@ -5,9 +7,30 @@
 #  No need to grep through algorithm code when fine-tuning.
 # ============================================================
 
-# ── API Credentials ──────────────────────────────────────────
-API_KEY    = "PKQ2XILCAMFJLKF4AM3JIJYXLY"
-API_SECRET = "8QDtrLFfY25TKrWedBRkxyXbw4e8sWcpu5wA1PZ2X1y7"
+import os
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_repo_env() -> None:
+    env_path = REPO_ROOT / ".env"
+    if not env_path.is_file():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, val)
+
+
+_load_repo_env()
+
+# ── API Credentials (from .env: ALPACA_API_KEY / ALPACA_API_SECRET) ──
+API_KEY = os.getenv("ALPACA_API_KEY") or ""
+API_SECRET = os.getenv("ALPACA_API_SECRET") or ""
 
 # ── Data fetch window ────────────────────────────────────────
 FETCH_DAYS       = 400    # calendar days of history to pull (~280 trading days)

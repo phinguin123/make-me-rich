@@ -1,14 +1,13 @@
+import _paths  # noqa: F401 — repo root on sys.path
+from screener.config import API_KEY, API_SECRET
 import alpaca_trade_api as tradeapi
 from datetime import datetime, timedelta
 from collections import defaultdict
 import pandas as pd
 
-# --- 1. SETUP YOUR CREDENTIALS ---
-API_KEY = "PKQ2XILCAMFJLKF4AM3JIJYXLY"
-SECRET_KEY = "8QDtrLFfY25TKrWedBRkxyXbw4e8sWcpu5wA1PZ2X1y7"
 BASE_URL = 'https://paper-api.alpaca.markets' # Or live URL
 
-api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
+api = tradeapi.REST(API_KEY, API_SECRET, BASE_URL, api_version='v2')
 
 def calculate_poc(ticker, days_back=90, bucket_size=0.50):
     print(f"Fetching data to calculate exact POC for {ticker} over the last {days_back} days...")

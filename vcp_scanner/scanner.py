@@ -51,6 +51,7 @@ from .config import (
     KST,
     MAX_CANDIDATES,
     MIN_HISTORY_ROWS,
+    OUTPUT_DIR,
 )
 from .data_quality import adjust_for_splits, log_drop, validate_ohlcv
 from .features.flows import prefetch_universe_flows
@@ -75,7 +76,7 @@ def _stage(n: int | str, label: str, count: int, total: int | None = None) -> No
 async def run_scanner(
     bot,
     *,
-    output_file: str   = "vcp_targets_ranked.csv",
+    output_file: str   = str(OUTPUT_DIR / "vcp_targets_ranked.csv"),
     days_back:   int   = 400,    # OHLCV history window (calendar days)
     flow_days:   int   = 20,     # lookback for flow pre-fetch
     rest_sleep:  float = 0.12,   # seconds between REST calls

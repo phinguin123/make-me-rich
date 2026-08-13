@@ -1,3 +1,5 @@
+import _paths
+from _paths import OUTPUT_DIR, SESSION_PATH
 import FinanceDataReader as fdr
 import pandas as pd
 import numpy as np
@@ -14,20 +16,20 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 1000)
 pd.options.display.float_format = '{:,.2f}'.format
 
-logging.basicConfig(filename='squeeze_radar_errors.log', level=logging.WARNING)
+logging.basicConfig(filename=str(OUTPUT_DIR / 'squeeze_radar_errors.log'), level=logging.WARNING)
 
 # --- 1. SESSION MANAGEMENT ---
 def get_active_session():
     """Loads the session cookies maintained by session_manager.py"""
     session = requests.Session()
     try:
-        with open("session_data.json", "r") as f:
+        with SESSION_PATH.open("r") as f:
             cookies = json.load(f)
         for name, value in cookies.items():
             session.cookies.set(name, value, domain="data.krx.co.kr")
         return session
     except FileNotFoundError:
-        print("Error: session_data.json not found. Run your session_manager.py first!")
+        print(f"Error: {SESSION_PATH} not found. Run session_manager.py first!")
         return None
 
 # --- 2. THE KRX SBL SCRAPER ---
@@ -89,7 +91,9 @@ def get_korean_universe():
     return df.reset_index(drop=True)
 
 # --- 4. THE RADAR LOGIC ---
-def run_sbl_squeeze_radar(output_file='sbl_watch.csv'):
+def run_sbl_squeeze_radar(output_file=None):
+    if output_file is None:
+        output_file = str(OUTPUT_DIR / "sbl_watch.csv")
     universe = get_korean_universe()
     session = get_active_session()
     

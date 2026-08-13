@@ -1,42 +1,13 @@
 """
-vcp_checker.py — entrypoint for the Korean VCP/Momentum scanner.
-
-All business logic now lives in the vcp_scanner package:
-  vcp_scanner/config.py       — constants, weights, market defaults
-  vcp_scanner/kiwoom_client.py  — async REST wrappers (safe_post, paginated_post)
-  vcp_scanner/data_quality.py — OHLCV validation, split adjustment, drop logging
-  vcp_scanner/features/
-      price.py     — Wilder EMA ATR contraction, vol pct, POC, breakout proximity, RS
-      liquidity.py — median trading value, turnover proxy
-      flows.py     — ka10058 universe prefetch + ka10059 per-symbol + scoring
-      leverage.py  — credit level, delta, cross-sectional z-score
-  vcp_scanner/compute.py   — compute_features(symbol) → dict
-  vcp_scanner/ranking.py   — rank_candidates(df) → df  (flow spike-dampened)
-  vcp_scanner/scanner.py   — run_scanner(bot) — main pipeline
-  vcp_scanner/backtest.py  — offline forward-return evaluation
-  vcp_scanner/report.py    — vcp_scorecard.parquet + report.md
+Entrypoint for the Korean VCP/Momentum scanner.
 
 Usage
 -----
-  # Standard scan (writes vcp_targets_ranked.csv + vcp_scorecard.parquet + report.md)
-  .\\myenv2\\Scripts\\python.exe vcp_checker.py
+  python -m vcp_scanner
+  python -m vcp_scanner --backtest
+  python -m vcp_scanner --backtest-only
 
-  # Scan + run backtest on today's signals (writes vcp_backtest.parquet too)
-  .\\myenv2\\Scripts\\python.exe vcp_checker.py --backtest
-
-  # Backtest only (re-uses existing vcp_targets_ranked.csv, no Kiwoom API needed)
-  .\\myenv2\\Scripts\\python.exe vcp_checker.py --backtest-only
-
-Environment variables
----------------------
-  KIWOOM_APPKEY          override API key
-  KIWOOM_SECRETKEY       override secret
-  KIWOOM_RATE_SLEEP      inter-request sleep in seconds (default 0.12)
-  VCP_DEBUG              set to 1 to enable verbose debug logging
-  VCP_GATE_TURNOVER      minimum ADV20 in KRW (default 5_000_000_000)
-  VCP_GATE_FOREIGN_RATIO minimum 5-day foreign flow ratio (default 0.0)
-  VCP_MAX_CANDIDATES     maximum candidates in final output (default 20)
-  VCP_DROPPED_LOG        path for dropped-tickers log (default dropped_tickers.log)
+Writes ranked CSV, scorecard, and report.md under output/vcp/.
 """
 from __future__ import annotations
 
@@ -48,18 +19,26 @@ import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+_ROOT = Path(__file__).resolve().parents[1]
+_BACKEND = _ROOT / "backend"
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from kiwoom import Bot, REAL
 from kiwoom.http.client import Client as KiwoomHttpClient
 
-from vcp_scanner.config import APP_KEY, APP_SECRET
+from vcp_scanner.config import APP_KEY, APP_SECRET, OUTPUT_DIR
 from vcp_scanner.scanner import run_scanner
 from vcp_scanner.ranking import summary_table
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
-    filename="vcp_checker_errors.log",
+    filename=str(OUTPUT_DIR / "vcp_checker_errors.log"),
     level=logging.WARNING,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
@@ -72,8 +51,8 @@ if os.getenv("VCP_DEBUG", "").strip().lower() in ("1", "true", "yes", "y", "on")
     _dbg.addHandler(_h)
 
 KST = ZoneInfo("Asia/Seoul")
-RANKED_CSV     = "vcp_targets_ranked.csv"
-BACKTEST_PARQUET = "vcp_backtest.parquet"
+RANKED_CSV = str(OUTPUT_DIR / "vcp_targets_ranked.csv")
+BACKTEST_PARQUET = str(OUTPUT_DIR / "vcp_backtest.parquet")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -97,21 +76,20 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--output-dir",
-        default=".",
+        default=str(OUTPUT_DIR),
         dest="output_dir",
-        help="Directory for report.md and vcp_scorecard.parquet (default: .)",
+        help="Directory for report.md and vcp_scorecard.parquet (default: output/vcp)",
     )
     return p.parse_args()
 
 
 async def _run_scan(args: argparse.Namespace) -> None:
     """Full scan via Kiwoom API, then report (and optional backtest)."""
-    from datetime import datetime
+    if not APP_KEY or not APP_SECRET:
+        print("  [ERROR] Missing APP_KEY / APP_SECRET. Copy .env.example to .env.")
+        sys.exit(1)
 
-    appkey    = os.getenv("KIWOOM_APPKEY",    APP_KEY)
-    secretkey = os.getenv("KIWOOM_SECRETKEY", APP_SECRET)
-
-    async with Bot(host=REAL, appkey=appkey, secretkey=secretkey) as bot:
+    async with Bot(host=REAL, appkey=APP_KEY, secretkey=APP_SECRET) as bot:
         await KiwoomHttpClient.connect(bot.api, bot.api._appkey, bot.api._secretkey)
         try:
             ranked = await run_scanner(bot, output_file=RANKED_CSV)
@@ -130,7 +108,6 @@ async def _run_scan(args: argparse.Namespace) -> None:
     print(view.head(20).to_string(index=False))
     print(f"\nFull results → {RANKED_CSV}  ({len(ranked)} candidates ranked)")
 
-    # Generate parquet scorecard + report.md
     backtest_df = None
     if args.backtest and Path(RANKED_CSV).exists():
         backtest_df = _run_backtest_on_csv(RANKED_CSV)
@@ -170,7 +147,7 @@ def _backtest_only_mode(args: argparse.Namespace) -> None:
         print(f"  [ERROR] {RANKED_CSV} not found. Run a scan first.")
         sys.exit(1)
 
-    ranked     = pd.read_csv(RANKED_CSV, dtype={"symbol": str})
+    ranked = pd.read_csv(RANKED_CSV, dtype={"symbol": str})
     backtest_df = _run_backtest_on_csv(RANKED_CSV)
     _write_report(ranked, backtest_df, args.output_dir)
 

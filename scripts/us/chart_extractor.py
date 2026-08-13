@@ -1,3 +1,5 @@
+import _paths  # noqa: F401 — repo root on sys.path
+from screener.config import API_KEY, API_SECRET
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
@@ -10,8 +12,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ==========================================
 # CONFIGURATION
 # ==========================================
-API_KEY    = "PKQ2XILCAMFJLKF4AM3JIJYXLY"
-SECRET_KEY = "8QDtrLFfY25TKrWedBRkxyXbw4e8sWcpu5wA1PZ2X1y7"
 SYMBOL        = "PRIM"
 TRADING_DAYS  = 5    # number of past trading days to include
 MARKET_OPEN   = (13, 30)   # UTC — NYSE open
@@ -21,7 +21,7 @@ MARKET_CLOSE  = (20,  0)   # UTC — NYSE close
 # ==========================================
 # SETUP CLIENT
 # ==========================================
-client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+client = StockHistoricalDataClient(API_KEY, API_SECRET)
 
 
 def get_5min_data(symbol: str, trading_days: int = 5) -> dict:

@@ -12,6 +12,17 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
+import os
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_APP_DIR = Path(__file__).resolve().parent
+_BACKEND = _REPO_ROOT / "backend"
+_OUTPUT = _REPO_ROOT / "output" / "foreign_trend"
+_OUTPUT.mkdir(parents=True, exist_ok=True)
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+if str(_APP_DIR) not in sys.path:
+    sys.path.insert(0, str(_APP_DIR))
 
 try:
     import websockets
@@ -71,8 +82,25 @@ def _resolve_target_ticker_and_qt_argv(default_ticker: str = "078350") -> tuple[
 
 
 # 1. Configuration
-APP_KEY = "PnA1EOmZe71U6zqMyP6XXwmWx-blKl4MXCrRNgfpFNU"
-APP_SECRET = "3d26y_XIE-TMdQONKWe_LF0O9Dl0wyVhL2fb_sXFew0"
+def _load_repo_env(root: Path) -> None:
+    env_path = root / ".env"
+    if not env_path.is_file():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, val)
+
+
+_load_repo_env(_REPO_ROOT)
+APP_KEY = os.getenv("APP_KEY") or os.getenv("KIWOOM_APPKEY") or ""
+APP_SECRET = os.getenv("APP_SECRET") or os.getenv("KIWOOM_SECRETKEY") or ""
+if not APP_KEY or not APP_SECRET:
+    raise SystemExit("Missing APP_KEY / APP_SECRET. Copy .env.example to .env.")
 TARGET_TICKER, QT_APPLICATION_ARGV = _resolve_target_ticker_and_qt_argv("078350")
 
 # --- "Skin" (only you know the map; keep this block private) ---
@@ -92,12 +120,12 @@ HOGA_WS_PORT: int | None = 8766
 _HOGA_WS_CLIENTS: set = set()
 
 SNAPSHOT_LOG_ENABLE = True
-SNAPSHOT_LOG_PATH = Path(__file__).resolve().parent / "relay_snapshots.jsonl"
+SNAPSHOT_LOG_PATH = _OUTPUT / "relay_snapshots.jsonl"
 # "every" = one JSON line per 0F (noisy). "churn" = only when top-5 signature changes, plus one seed line at start.
 SNAPSHOT_LOG_MODE = "churn"
 
 # General diagnostic log (rotating). This is separate from SNAPSHOT_LOG_PATH.
-LOG_PATH = Path(__file__).resolve().parent / "foreign_trend.log"
+LOG_PATH = _OUTPUT / "foreign_trend.log"
 LOG_LEVEL = logging.INFO
 LOG_MAX_BYTES = 5_000_000
 LOG_BACKUP_COUNT = 3
@@ -530,7 +558,7 @@ async def fetch_ka10014_short_selling_trend(
 
 def broker_session_cache_path() -> Path:
     d = datetime.now(KST).strftime("%Y%m%d")
-    return Path(__file__).resolve().parent / f"broker_0f_{TARGET_TICKER}_{d}.jsonl"
+    return _OUTPUT / f"broker_0f_{TARGET_TICKER}_{d}.jsonl"
 
 
 def load_broker_session_cache_rows() -> list[dict]:

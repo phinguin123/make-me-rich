@@ -7,14 +7,36 @@ touching algorithmic code.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from zoneinfo import ZoneInfo
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = REPO_ROOT / "output" / "vcp"
+
+
+def _load_repo_env() -> None:
+    env_path = REPO_ROOT / ".env"
+    if not env_path.is_file():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, val)
+
+
+_load_repo_env()
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Timezone ─────────────────────────────────────────────────────────────────
 KST = ZoneInfo("Asia/Seoul")
 
-# ── Kiwoom credentials ────────────────────────────────────────────────────────
-APP_KEY    = os.getenv("KIWOOM_APPKEY",    "PnA1EOmZe71U6zqMyP6XXwmWx-blKl4MXCrRNgfpFNU")
-APP_SECRET = os.getenv("KIWOOM_SECRETKEY", "3d26y_XIE-TMdQONKWe_LF0O9Dl0wyVhL2fb_sXFew0")
+# ── Kiwoom credentials (from .env: APP_KEY / APP_SECRET, or KIWOOM_* aliases)
+APP_KEY = os.getenv("KIWOOM_APPKEY") or os.getenv("APP_KEY") or ""
+APP_SECRET = os.getenv("KIWOOM_SECRETKEY") or os.getenv("APP_SECRET") or ""
 
 # Seconds to sleep between each Kiwoom REST call (target ≤10 req/s)
 KIWOOM_RATE_LIMIT_SLEEP: float = float(os.getenv("KIWOOM_RATE_SLEEP", "0.12"))

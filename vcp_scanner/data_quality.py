@@ -37,6 +37,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -48,7 +49,9 @@ SPLIT_OVERNIGHT_GAP: float = 0.40     # |overnight gap| > 40 % → suspect split
 MIN_VALID_DAYS_RATIO: float = 0.70    # ≥ 70 % of expected trading days must exist
 STALE_VOLUME_DAYS: int = 3            # > 3 consecutive zero-volume days → warning
 
-DROPPED_LOG_FILE: str = os.environ.get("VCP_DROPPED_LOG", "dropped_tickers.log")
+_default_drop_log = Path(__file__).resolve().parents[1] / "output" / "vcp" / "dropped_tickers.log"
+DROPPED_LOG_FILE: str = os.environ.get("VCP_DROPPED_LOG", str(_default_drop_log))
+Path(DROPPED_LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 _drop_log = logging.getLogger("vcp_scanner.dropped")

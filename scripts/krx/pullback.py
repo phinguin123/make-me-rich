@@ -1,3 +1,5 @@
+import _paths
+from _paths import OUTPUT_DIR
 import FinanceDataReader as fdr
 import pandas as pd
 import numpy as np
@@ -6,7 +8,7 @@ import time
 from tqdm import tqdm
 import logging
 
-logging.basicConfig(filename='pullback_errors.log', level=logging.WARNING)
+logging.basicConfig(filename=str(OUTPUT_DIR / 'pullback_errors.log'), level=logging.WARNING)
 
 def get_korean_universe():
     df = fdr.StockListing('KRX')

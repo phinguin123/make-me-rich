@@ -1,3 +1,5 @@
+import _paths
+from _paths import SESSION_PATH
 import requests
 import time
 import json
@@ -11,8 +13,8 @@ def manage_session():
     session = requests.Session()
     
     # Load cookies from file if they exist, otherwise use defaults
-    if os.path.exists("session_data.json"):
-        with open("session_data.json", "r") as f:
+    if SESSION_PATH.exists():
+        with SESSION_PATH.open("r") as f:
             cookies = json.load(f)
             for k, v in cookies.items():
                 session.cookies.set(k, v, domain="data.krx.co.kr")
@@ -37,7 +39,7 @@ def manage_session():
                 print(f"[{time.strftime('%H:%M:%S')}] SESSION DEAD. Please re-capture JSESSIONID.")
             else:
                 # Save the current state
-                with open("session_data.json", "w") as f:
+                with SESSION_PATH.open("w") as f:
                     json.dump(session.cookies.get_dict(), f)
                 print(f"[{time.strftime('%H:%M:%S')}] Heartbeat OK. Session extended.")
         

@@ -21,10 +21,15 @@ Both algorithms and the diagnostics tools automatically pick up the new values.
 import sys
 import logging
 import warnings
+from pathlib import Path
+
 import pandas as pd
 
 warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
-logging.basicConfig(filename="alpaca_scanner_errors.log", level=logging.WARNING)
+
+_LOG_DIR = Path(__file__).resolve().parents[1] / "output" / "us"
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(filename=str(_LOG_DIR / "alpaca_scanner_errors.log"), level=logging.WARNING)
 
 
 def _get_sample_arg(default: int = 500) -> int:

@@ -1,3 +1,5 @@
+import _paths
+from _paths import OUTPUT_DIR
 import FinanceDataReader as fdr
 import pandas as pd
 import numpy as np
@@ -9,7 +11,7 @@ import warnings
 
 # Suppress pandas fragmentation warnings for cleaner output
 warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
-logging.basicConfig(filename='master_scanner_errors.log', level=logging.WARNING)
+logging.basicConfig(filename=str(OUTPUT_DIR / 'master_scanner_errors.log'), level=logging.WARNING)
 
 def get_korean_universe():
     df = fdr.StockListing('KRX')

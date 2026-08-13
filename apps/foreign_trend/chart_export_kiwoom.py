@@ -5,10 +5,16 @@ Primary fix: ka10080 with stk_cd "KRX:XXXXXX" often returns a single invalid row
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 from zoneinfo import ZoneInfo
+
+_BACKEND = Path(__file__).resolve().parents[2] / "backend"
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
 
 from kiwoom import Bot
 from kiwoom.config.candle import PERIOD_TO_BODY_KEY, PERIOD_TO_DATA, PERIOD_TO_TIME_KEY, valid

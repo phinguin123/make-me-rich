@@ -16,4 +16,15 @@ env/
 ENV/
 
 __pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
 
+# Runtime / generated artifacts
+output/*
+!output/.gitkeep
+session_data.json
+*.log
+*.jsonl
+broker_0f_*.jsonl
+*.parquet

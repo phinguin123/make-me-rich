@@ -1,3 +1,5 @@
+import _paths  # noqa: F401 — repo root on sys.path
+from screener.config import API_KEY, API_SECRET
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
@@ -7,10 +9,6 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
 warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
-
-# ================= API CREDENTIALS =================
-API_KEY = "PKQ2XILCAMFJLKF4AM3JIJYXLY"
-API_SECRET = "8QDtrLFfY25TKrWedBRkxyXbw4e8sWcpu5wA1PZ2X1y7"
 
 data_client = StockHistoricalDataClient(API_KEY, API_SECRET)
 

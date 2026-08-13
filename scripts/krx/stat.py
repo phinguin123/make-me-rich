@@ -1,3 +1,5 @@
+import _paths
+from _paths import SESSION_PATH
 import requests
 import json
 import pandas as pd
@@ -19,13 +21,13 @@ def get_active_session():
     """Loads the session cookies maintained by session_manager.py"""
     session = requests.Session()
     try:
-        with open("session_data.json", "r") as f:
+        with SESSION_PATH.open("r") as f:
             cookies = json.load(f)
         for name, value in cookies.items():
             session.cookies.set(name, value, domain="data.krx.co.kr")
         return session
     except FileNotFoundError:
-        print("Error: session_data.json not found. Run session_manager.py first!")
+        print(f"Error: {SESSION_PATH} not found. Run session_manager.py first!")
         return None
 
 def scrape_stock(ticker, isin, start, end):

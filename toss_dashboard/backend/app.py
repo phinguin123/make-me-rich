@@ -4,7 +4,13 @@ from flask import Flask, jsonify
 from flask_socketio import SocketIO
 from flask_cors import CORS
 
-from config import TOSS_CLIENT_ID, TOSS_CLIENT_SECRET, TOSS_ACCOUNT_SEQ, ENABLE_LIVE_TRADING
+from config import (
+    TOSS_CLIENT_ID,
+    TOSS_CLIENT_SECRET,
+    TOSS_ACCOUNT_SEQ,
+    ENABLE_LIVE_TRADING,
+    TOSS_DASHBOARD_PORT,
+)
 from core.client import TossOpenAPIClient
 from core.bot import Quantitative24HourBot
 from utils.logger import configure_socket_logger
@@ -70,18 +76,25 @@ def get_status():
 def start_bot():
     global bot_thread, stop_event
     if bot_thread is not None and bot_thread.is_alive():
-        return jsonify({"message": "Bot is already running"}), 400
+        return jsonify({"message": "Bot is already running", "running": True}), 400
         
     stop_event.clear()
     bot_thread = threading.Thread(target=run_bot_loop, daemon=True)
     bot_thread.start()
-    return jsonify({"message": "Bot started successfully"})
+    return jsonify({"message": "Bot started successfully", "running": True})
 
 @app.route("/api/stop", methods=["POST"])
 def stop_bot():
     global stop_event
     stop_event.set()
-    return jsonify({"message": "Stop signal sent to bot"})
+    return jsonify({"message": "Stop signal sent to bot", "running": False})
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=TOSS_DASHBOARD_PORT,
+        debug=False,
+        use_reloader=False,
+        allow_unsafe_werkzeug=True,
+    )

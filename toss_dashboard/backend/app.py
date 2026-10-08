@@ -1,100 +1,157 @@
-import time
-import threading
-from flask import Flask, jsonify
-from flask_socketio import SocketIO
-from flask_cors import CORS
+"""Dashboard + engine host. One process = one Toss token (a second process would revoke it).
 
-from config import (
-    TOSS_CLIENT_ID,
-    TOSS_CLIENT_SECRET,
-    TOSS_ACCOUNT_SEQ,
-    ENABLE_LIVE_TRADING,
-    TOSS_DASHBOARD_PORT,
-)
-from core.client import TossOpenAPIClient
-from core.bot import Quantitative24HourBot
-from utils.logger import configure_socket_logger
+    python app.py                      # http://localhost:5050
+"""
+from __future__ import annotations
 
-app = Flask(__name__)
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+import asyncio
+import logging
+import os
+import secrets
+from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
-# Setup Logger to stream to WebSockets
-configure_socket_logger(socketio)
+import uvicorn
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-# Global State
-bot_thread = None
-stop_event = threading.Event()
+from trader.config import DATA_DIR, SETTINGS
+from trader.engine import Engine
 
-def bot_state_callback(state_dict):
-    """Callback fired by the bot every iteration. Pushes data to React."""
-    socketio.emit("system_state", state_dict)
+DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+TOKEN = os.getenv("TRADER_DASHBOARD_TOKEN", "").strip()
 
-def run_bot_loop():
-    """Background Daemon Loop"""
-    toss_client = TossOpenAPIClient(
-        client_id=TOSS_CLIENT_ID,
-        client_secret=TOSS_CLIENT_SECRET,
-        account_seq=TOSS_ACCOUNT_SEQ,
-        dry_run=not ENABLE_LIVE_TRADING
-    )
-    
-    bot = Quantitative24HourBot(
-        api_client=toss_client, 
-        symbol="SOXL", 
-        target_size=500,
-        on_state_update=bot_state_callback
-    )
-    
-    app.logger.info("Background Trading Engine Started.")
-    
-    while not stop_event.is_set():
-        try:
-            session_info = bot.session_manager.get_session_info()
-            regime = session_info["regime"]
 
-            bot.run_strategy_iteration()
+def token_ok(supplied: str | None) -> bool:
+    return not TOKEN or (supplied is not None and secrets.compare_digest(supplied, TOKEN))
 
-            # Dynamic Polling Interval
-            if regime in ["REGULAR", "PRE_MARKET"]:
-                time.sleep(0.25)
-            elif regime in ["DAYTIME_ATS", "AFTER_MARKET"]:
-                time.sleep(1.0)
-            else:
-                time.sleep(10.0)
-                
-        except Exception as e:
-            app.logger.error(f"Engine Loop Error: {str(e)}", exc_info=True)
-            time.sleep(5)  # Prevent rapid fail-loop
 
-@app.route("/api/status", methods=["GET"])
-def get_status():
-    is_running = bot_thread is not None and bot_thread.is_alive()
-    return jsonify({"running": is_running})
+async def require_token(request: Request) -> None:
+    if not token_ok(request.headers.get("x-token") or request.query_params.get("token")):
+        raise HTTPException(status_code=401, detail="bad token")
 
-@app.route("/api/start", methods=["POST"])
-def start_bot():
-    global bot_thread, stop_event
-    if bot_thread is not None and bot_thread.is_alive():
-        return jsonify({"message": "Bot is already running", "running": True}), 400
-        
-    stop_event.clear()
-    bot_thread = threading.Thread(target=run_bot_loop, daemon=True)
-    bot_thread.start()
-    return jsonify({"message": "Bot started successfully", "running": True})
 
-@app.route("/api/stop", methods=["POST"])
-def stop_bot():
-    global stop_event
-    stop_event.set()
-    return jsonify({"message": "Stop signal sent to bot", "running": False})
+def setup_logging() -> None:
+    (DATA_DIR / "logs").mkdir(parents=True, exist_ok=True)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    for h in (logging.StreamHandler(), RotatingFileHandler(DATA_DIR / "logs" / "trader.log", maxBytes=10_000_000, backupCount=5)):
+        h.setFormatter(fmt)
+        root.addHandler(h)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
+
+
+class Host:
+    engine: Engine | None = None
+    task: asyncio.Task | None = None
+
+    def running(self) -> bool:
+        return self.task is not None and not self.task.done()
+
+    def start(self) -> None:
+        if not self.running():
+            self.engine = Engine(SETTINGS)
+            self.task = asyncio.create_task(self.engine.run())
+
+    async def stop(self) -> None:
+        if self.engine and self.running():
+            await self.engine.stop()
+            await asyncio.wait_for(self.task, timeout=30)
+
+
+host = Host()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    setup_logging()
+    if os.getenv("TRADER_AUTOSTART", "true").lower() == "true":
+        host.start()
+    yield
+    await host.stop()
+
+
+app = FastAPI(title="Toss Auto Trader", lifespan=lifespan)
+api = Depends(require_token)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+def status() -> dict:
+    if host.engine is None:
+        return {"running": False, "mode": SETTINGS.mode}
+    snap = host.engine.snapshot()
+    snap["running"] = host.running()
+    return snap
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True, "running": host.running()}
+
+
+@app.get("/api/status", dependencies=[api])
+async def api_status():
+    return status()
+
+
+@app.post("/api/start", dependencies=[api])
+async def api_start():
+    host.start()
+    return {"running": True}
+
+
+@app.post("/api/stop", dependencies=[api])
+async def api_stop():
+    await host.stop()
+    return {"running": False}
+
+
+@app.post("/api/pause", dependencies=[api])
+async def api_pause():
+    if host.engine:
+        host.engine.paused = True
+    return {"paused": True}
+
+
+@app.post("/api/resume", dependencies=[api])
+async def api_resume():
+    if host.engine:
+        host.engine.paused = False
+    return {"paused": False}
+
+
+@app.post("/api/flatten", dependencies=[api])
+async def api_flatten():
+    if host.engine and host.running():
+        await host.engine.flatten()
+    return {"flattened": True}
+
+
+@app.websocket("/ws")
+async def ws(socket: WebSocket):
+    if not token_ok(socket.query_params.get("token")):
+        await socket.close(code=4401)
+        return
+    await socket.accept()
+    try:
+        while True:
+            await socket.send_json(status())
+            await asyncio.sleep(1.0)
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+
+
+if DIST.exists():
+    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+
+    @app.get("/{path:path}")
+    async def spa(path: str):
+        return FileResponse(DIST / "index.html")
+
 
 if __name__ == "__main__":
-    socketio.run(
-        app,
-        host="0.0.0.0",
-        port=TOSS_DASHBOARD_PORT,
-        debug=False,
-        use_reloader=False,
-        allow_unsafe_werkzeug=True,
-    )
+    uvicorn.run(app, host=os.getenv("TRADER_HOST", "0.0.0.0"), port=SETTINGS.port, log_level="warning")

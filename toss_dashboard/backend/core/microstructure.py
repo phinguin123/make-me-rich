@@ -26,11 +26,17 @@ class MicrostructureEngine:
         if len(volume_bars) < window: return volume_bars
         volume_bars = volume_bars.copy()
         
+        # 1. Force the close column to float to prevent Pandas object casting issues
+        volume_bars["close"] = volume_bars["close"].astype(float)
+        
         volume_bars["delta_p"] = volume_bars["close"].diff()
         volume_bars["sigma_p"] = volume_bars["delta_p"].rolling(window=window).std()
         safe_sigma = np.where(volume_bars["sigma_p"] == 0, 1e-8, volume_bars["sigma_p"])
         
-        volume_bars["buy_prob"] = norm.cdf((volume_bars["delta_p"] / safe_sigma).fillna(0))
+        # 2. Force the resulting z_scores to float before passing to SciPy
+        z_scores = (volume_bars["delta_p"] / safe_sigma).fillna(0).astype(float)
+        
+        volume_bars["buy_prob"] = norm.cdf(z_scores)
         volume_bars["v_buy"] = bucket_vol * volume_bars["buy_prob"]
         volume_bars["v_sell"] = bucket_vol - volume_bars["v_buy"]
         
@@ -40,18 +46,30 @@ class MicrostructureEngine:
 
     @staticmethod
     def compute_ofi(quotes: pd.DataFrame) -> pd.Series:
-        if quotes.empty: return pd.Series(dtype=float)
+        if quotes.empty or len(quotes) < 2: 
+            return pd.Series(dtype=float)
+
         q = quotes.copy()
-        q["prev_bid_p"], q["prev_bid_s"] = q["bid_price"].shift(1), q["bid_size"].shift(1)
-        q["prev_ask_p"], q["prev_ask_s"] = q["ask_price"].shift(1), q["ask_size"].shift(1)
+        
+        # Ensure all quote columns are explicitly numeric floats
+        for col in ["bid_price", "bid_size", "ask_price", "ask_size"]:
+            q[col] = q[col].astype(float)
+
+        q["prev_bid_p"] = q["bid_price"].shift(1).fillna(q["bid_price"])
+        q["prev_bid_s"] = q["bid_size"].shift(1).fillna(0.0)
+        q["prev_ask_p"] = q["ask_price"].shift(1).fillna(q["ask_price"])
+        q["prev_ask_s"] = q["ask_size"].shift(1).fillna(0.0)
         
         e_b = np.where(q["bid_price"] > q["prev_bid_p"], q["bid_size"],
-              np.where(q["bid_price"] == q["prev_bid_p"], q["bid_size"] - q["prev_bid_s"], -q["prev_bid_s"]))
+              np.where(q["bid_price"] == q["prev_bid_p"], q["bid_size"] - q["prev_bid_s"],
+              -q["prev_bid_s"]))
+              
         e_a = np.where(q["ask_price"] < q["prev_ask_p"], q["ask_size"],
-              np.where(q["ask_price"] == q["prev_ask_p"], q["ask_size"] - q["prev_ask_s"], -q["prev_ask_s"]))
-        
+              np.where(q["ask_price"] == q["prev_ask_p"], q["ask_size"] - q["prev_ask_s"],
+              -q["prev_ask_s"]))
+              
         q["ofi"] = np.nan_to_num(e_b) - np.nan_to_num(e_a)
-        return q["ofi"]
+        return pd.Series(q["ofi"], index=q.index)
 
     @staticmethod
     def kmeans_cluster_levels(df: pd.DataFrame, window: int = 5, k: int = 3) -> Tuple[List[float], List[float]]:

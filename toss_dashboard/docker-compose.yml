@@ -1,0 +1,15 @@
+# Toss auto trader: engine + dashboard in one container (one Toss token).
+#   docker compose up -d --build        → http://<host>:5050/?token=<TRADER_DASHBOARD_TOKEN>
+name: toss-trader
+
+services:
+  trader:
+    build: .
+    env_file: ../.env
+    environment:
+      TZ: Asia/Seoul
+    volumes:
+      - ./backend/data:/app/backend/data
+    ports:
+      - "${TRADER_BIND:-127.0.0.1}:5050:5050"
+    restart: unless-stopped

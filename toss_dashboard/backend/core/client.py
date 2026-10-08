@@ -28,12 +28,20 @@ class RateLimiter:
             self.tokens -= 1.0
 
 class TossOpenAPIClient:
-    def __init__(self, client_id: str, client_secret: str, account_seq: str, dry_run: bool = True):
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        account_seq: str,
+        dry_run: bool = True,
+        tick_feed=None,
+    ):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.client_id = client_id
         self.client_secret = client_secret
         self.account_seq = account_seq
         self.dry_run = dry_run
+        self.tick_feed = tick_feed
         
         self.base_url = "https://openapi.tossinvest.com"
         self.access_token: Optional[str] = None
@@ -91,6 +99,8 @@ class TossOpenAPIClient:
         raise RuntimeError("Rate limit retry threshold exceeded.")
 
     def get_tick_trades(self, symbol: str, count: int = 50) -> pd.DataFrame:
+        if self.tick_feed is not None:
+            return self.tick_feed.drain_ticks(count)
         data = self.request("GET", "/api/v1/trades", params={"symbol": symbol, "count": count})
         trades = data if isinstance(data, list) else []
         if not trades:
@@ -103,6 +113,10 @@ class TossOpenAPIClient:
         return df.sort_values("timestamp").reset_index(drop=True)
 
     def get_l1_orderbook(self, symbol: str) -> pd.DataFrame:
+        if self.tick_feed is not None:
+            quote = self.tick_feed.latest_l1()
+            if not quote.empty:
+                return quote
         data = self.request("GET", "/api/v1/orderbook", params={"symbol": symbol})
         asks, bids = data.get("asks", []), data.get("bids", [])
         if not asks or not bids:

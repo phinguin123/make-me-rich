@@ -1,5 +1,7 @@
 .env
 .env.local
+.env.*
+!.env.example
 
 node_modules/
 .yarn/cache/
@@ -28,3 +30,6 @@ session_data.json
 *.jsonl
 broker_0f_*.jsonl
 *.parquet
+
+# Toss trader runtime data: token cache, state, logs, research data
+toss_dashboard/backend/data/

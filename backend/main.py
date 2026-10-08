@@ -145,7 +145,18 @@ async def dummy_simulator() -> None:
                     "name": "주식호가잔량",
                     "item": ticker,
                     "values": _make_dummy_values(base),
-                }
+                },
+                {
+                    "type": "0B",
+                    "name": "주식체결",
+                    "item": ticker,
+                    "values": {
+                        "20": time.strftime("%H%M%S"),
+                        "10": str(base),
+                        "15": str(random.choice((-1, 1)) * random.randint(1, 80)),
+                        "13": str(random.randint(1, 200)),
+                    },
+                },
             ],
         }
         await broadcast(envelope)

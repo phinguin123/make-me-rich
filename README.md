@@ -13,12 +13,14 @@ stops and exits on its own, with a live dashboard. Full details:
 
 1. At 09:35 ET, rank liquid stocks by first-5-minute volume versus their 14-day
    average and keep the top 30.
-2. Keep only names with a green first candle, ATR ≥ 5% of price, and a close above
+2. Keep only names with a green first candle, ATR ≥ 6% of price, and a close above
    the 50-day average.
-3. Buy the first break of the 5-minute high before 11:30 ET.
+3. Buy the first break of the 5-minute high before 11:30 ET, but only while the
+   market is risk-on (QQQ above its VWAP and VIXY below its open).
 4. Stop 0.1 ATR below entry, trailing 0.75 ATR. Exit at the close, or hold strong
    closers overnight.
-5. Risk 1% of equity per trade, at most 35% in one name and 4 positions.
+5. Risk 1% of equity per trade, at most 25% in one name and 4 positions. New entries
+   stop for the day after a 2% loss.
 
 **Why:** about 200 strategy variants were backtested on 2.75 years of SIP 1-minute data
 with Toss's real costs (0.1%/side + slippage):
@@ -27,15 +29,24 @@ with Toss's real costs (0.1%/side + slippage):
 |---|---|---|---|
 | Breakout on all stocks in play | −46% | −1.31 / −1.44 | −83% |
 | Best unfiltered breakout / trend / overnight variant | −2% | 0.34 / −0.19 | −32% |
-| **Chosen: breakout + ATR ≥ 5% + uptrend** | **+62%** | **0.68 / 2.03** | **−19%** |
-| Chosen, at a 0.15% fee | +38% | 0.42 / 1.57 | −28% |
+| Bigger-swing profile: breakout + ATR ≥ 5% + uptrend | +62% | 0.68 / 2.03 | −19% |
+| **Safe profile (active): + risk-on filter, ATR ≥ 6%, 25% cap** | **+26%** | **1.11 / 1.01** | **−4.8%** |
+| Safe profile, at a 0.15% fee | +23% | 1.04 / 0.78 | −5.8% |
+| Safe profile, at a 0.20% fee (double Toss's rate) | +19% | 0.96 / 0.56 | −6.8% |
+
+The safe profile was positive in every year (2024 +11%, 2025 +54%, 2026 YTD +9%) and
+its worst month was −2.2%. Capital preservation comes first.
 
 - The breakout edge is real (+41–46% CAGR at zero commission), but Toss's 0.2% round
   trip destroys it on normal stocks.
 - Only very volatile, uptrending names move far enough to pay the fee.
 - About 2 trades/day is the realistic speed. Thousands of trades would pay more in
   fees than the account holds, and Toss restricts order spamming.
-- Returns are lumpy: 2024 was flat, and most gains came in a few strong quarters.
+- Returns are lumpy: the bigger-swing profile was flat in 2024. The safe profile
+  trades about 0.4 times a day and waits for risk-on markets.
+- Taxes: there is no US transaction tax, and the SEC fee is in the backtest. Korea's
+  22% overseas capital-gains tax applies to net annual gains above ₩2.5M (see
+  toss_dashboard/README.md).
 
 **Running it:** start between 21:00 and 22:15 KST, and the bot trades
 22:35–00:30 KST. Press Stop engine after 05:00 KST. Shift one hour later after

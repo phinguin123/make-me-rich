@@ -24,11 +24,13 @@ CONFIG_PATH = DATA_DIR / "strategy.json"
 
 @dataclass
 class StrategyConfig:
-    # Validated 2024-01..2026-10 at Toss's 0.1% commission (trader/research/backtest.py).
+    # "Safe" profile, validated 2024-01..2026-10 at Toss's 0.1% commission
+    # (trader/research/backtest.py): +26% CAGR, max drawdown -4.8%, profitable every year.
+    # Bigger-swing profile: regime="none", min_atr_pct=0.05, TRADER_MAX_POSITION_PCT=0.35.
     or_minutes: int = 5
     top_n: int = 30
     require_green: bool = True
-    min_atr_pct: float = 0.05  # only volatile names: fees are a small fraction of their moves
+    min_atr_pct: float = 0.06  # only volatile names: fees are a small fraction of their moves
     require_trend: bool = True  # previous close above its 50-day average
     min_gap: float = -1.0
     stop_mode: str = "atr"
@@ -36,7 +38,7 @@ class StrategyConfig:
     trail_atr: float = 0.75
     target_r: float = 0.0
     exit_mode: str = "hold_strong"
-    regime: str = "none"
+    regime: str = "risk_on"  # trade only while QQQ > VWAP and VIXY is below its open
     entry_cutoff: str = "11:30"
     max_chase: float = 0.004  # never pay more than 0.4% above the trigger
     max_spread: float = 0.005  # skip entries when the quoted spread is wider than this

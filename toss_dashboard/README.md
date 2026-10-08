@@ -4,10 +4,11 @@ Fully automatic US-stock day trader for a Toss Securities account, with a live
 dashboard. One process runs the engine, the REST/WebSocket API and the UI.
 
 - **Strategy:** stocks-in-play 5-minute opening-range breakout, long only, restricted to
-  very volatile names in an uptrend. It is the only variant of ~200 tested that stays
-  profitable after Toss's 0.1%/side commission.
-- **Backtest (Jan 2024 – Oct 2026, $3,000 start, all costs):** +62% CAGR, Sharpe 1.24,
-  max drawdown −19%, ~1.8 trades/day. Returns are lumpy (see below).
+  very volatile names in an uptrend, traded only in risk-on markets. Breakout variants
+  without these filters (~200 tested) do not survive Toss's 0.1%/side commission.
+- **Active profile: "safe" (capital first).** Backtest Jan 2024 – Oct 2026, $5,000
+  start, all costs: +26% CAGR, Sharpe 1.00, max drawdown −4.8%, worst month −2.2%,
+  positive every year, ~0.4 trades/day.
 - **Status:** the order path was verified live on the Toss account (create, modify,
   cancel and WebSocket fill events). The engine runs in `live` mode with
   `TRADER_CAPITAL=5000`.
@@ -17,14 +18,16 @@ dashboard. One process runs the engine, the REST/WebSocket API and the UI.
 1. **09:35:10 ET: scan.** Rank liquid US stocks (price > $5, 14-day ADV ≥ 1M shares,
    ATR ≥ $0.50, no ETFs, funds or leveraged products) by the relative volume of their
    first 5-minute bar versus its own 14-day average. Keep the top 30.
-2. **Filter.** The first 5-minute candle must be green, ATR must be ≥ 5% of price,
+2. **Filter.** The first 5-minute candle must be green, ATR must be ≥ 6% of price,
    and the previous close must be above the 50-day average.
-3. **Entry.** Buy when price trades 1¢ above the 5-minute high, before 11:30 ET. Only
-   the first breakout counts. Orders are marketable limits that never chase more than
+3. **Entry.** Buy when price trades 1¢ above the 5-minute high, before 11:30 ET, and
+   only while the market is risk-on: QQQ's last minute closed above its VWAP and VIXY
+   is below its open. Only the first breakout counts. Orders are marketable limits that never chase more than
    0.4% past the trigger, and entries are skipped when the spread is above 0.5%.
 4. **Risk.** Initial stop is 0.1 × ATR below entry, then a trailing stop 0.75 × ATR
    under the highest completed 1-minute high. Each trade risks 1% of equity, with at
-   most 35% of equity in one position and 4 positions at a time. No leverage.
+   most 25% of equity in one position and 4 positions at a time. No leverage. New
+   entries stop for the day after a 2% loss.
 5. **Exit.** On the stop, or at 15:57 ET. Exception: if the trade is ≥ 1R up and closing
    in the top 20% of its day range, hold overnight with the stop at breakeven or better,
    and exit by the next day's close.
@@ -39,13 +42,23 @@ is 2024-01..2025-06, out-of-sample (OOS) is 2025-07..2026-10.
 |---|---|---|---|
 | ORB on all stocks in play (published "stocks in play" rules) | −46% | −1.31 / −1.44 | −83% |
 | Best of 196 unfiltered ORB / trend-continuation / overnight variants | −2% | 0.34 / −0.19 | −32% |
-| **Chosen: ORB + ATR ≥ 5% + uptrend** | **+62%** | **0.68 / 2.03** | **−19%** |
+| Bigger-swing profile: ORB + ATR ≥ 5% + uptrend | +62% | 0.68 / 2.03 | −19% |
 | same, commission 0.15% | +38% | 0.42 / 1.57 | −28% |
 | same, commission 0.20% | +19% | 0.16 / 1.12 | −40% |
 | same, slippage 0.10%/side | +38% | 0.47 / 1.51 | −26% |
 | same, scanner keeps only the top 10 | +36% | 1.04 / 0.94 | −15% |
 | same + risk-on filter (`regime: risk_on`) | +34% | 0.96 / 1.12 | −10% |
 | same, entries allowed until 15:30 | +71% | 0.67 / 2.10 | −21% |
+| Bigger-swing + risk-on filter, ATR ≥ 6% (35% cap) | +37% | 1.09 / 1.04 | −6.7% |
+| **Safe profile (active): + 25% position cap** | **+26%** | **1.11 / 1.01** | **−4.8%** |
+| safe, commission 0.15% | +23% | 1.04 / 0.78 | −5.8% |
+| safe, commission 0.20% | +19% | 0.96 / 0.56 | −6.8% |
+| safe, slippage 0.10%/side | +23% | 1.01 / 0.85 | −5.9% |
+
+The safe profile returned 2024 +11%, 2025 +54% and 2026 YTD +9%, with a worst month of
+−2.2%. To switch to the bigger-swing profile, set `regime: none` and
+`min_atr_pct: 0.05` in `backend/data/strategy.json`, add
+`TRADER_MAX_POSITION_PCT=0.35` to `.env`, and restart.
 
 What the research found:
 
@@ -76,6 +89,29 @@ What the research found:
   overlaps the full-market (SIP) top 20 51% of the time on average (25 sampled days,
   rank correlation 0.52). The strategy still works on the top 10 or top 20, but the
   biggest gap between backtest and live is here. Alpaca's SIP feed ($99/mo) would close it.
+
+## Costs and taxes
+
+- **In the backtest, per trade:**
+  - Toss commission 0.1% on the buy and 0.1% on the sell.
+  - SEC fee 0.00206% on sells.
+  - Slippage 0.05% per side.
+- **No US transaction tax.** Korea's 증권거래세 applies to Korean stocks, not US stocks.
+  The FINRA TAF ($0.000166/share sold) is negligible and not modeled.
+- **Korean capital-gains tax (해외주식 양도소득세):** 22% (20% national + 2% local) of
+  your net realized overseas-stock gains for the calendar year, above a ₩2.5M basic
+  deduction. It's filed in May of the following year.
+  - Gains and losses from the bot and your manual US trades are combined, and the
+    result is measured in KRW at the exchange rates on each trade date.
+  - The backtest doesn't model it, because it is charged once a year on net profit,
+    not per trade. It doesn't change which strategy works, only how much you keep.
+- **Example ($5,000, about ₩1,340/$):**
+  - Safe profile at +26% ≈ $1,300 ≈ ₩1.74M → below the ₩2.5M deduction, so no tax
+    if that's your only overseas gain that year.
+  - Bigger-swing profile at +62% ≈ $3,100 ≈ ₩4.15M → (₩4.15M − ₩2.5M) × 22% ≈ ₩363k
+    (about $270), so the after-tax return is about +56%.
+- **Currency exchange:** converting KRW↔USD has a spread, which isn't modeled. The bot
+  trades your USD balance directly.
 
 ## Daily schedule (KST)
 
@@ -134,8 +170,8 @@ first one out.
 | `TRADER_CAPITAL` | `3000` | USD the bot may use (never more than Toss cash buying power) |
 | `TRADER_RISK_PER_TRADE` | `0.01` | equity lost if a trade hits its initial stop |
 | `TRADER_MAX_POSITIONS` | `4` | concurrent positions |
-| `TRADER_MAX_POSITION_PCT` | `0.35` | max equity in one position |
-| `TRADER_DAILY_LOSS_LIMIT` | `0.03` | no new entries for the day after this drawdown |
+| `TRADER_MAX_POSITION_PCT` | `0.25` | max equity in one position |
+| `TRADER_DAILY_LOSS_LIMIT` | `0.02` | no new entries for the day after this drawdown |
 | `TRADER_MAX_ORDERS_10MIN` / `_DAY` | `20` / `120` | order throttle |
 | `TRADER_HOLD_OVERNIGHT` | `true` | allow carrying strong closers overnight |
 | `TRADER_SERVER_STOPS` | `true` | live: Toss conditional stop for overnight holds and on engine stop |
@@ -151,7 +187,8 @@ Strategy parameters default to the validated values in `trader/strategy.py`
 
 - The engine only manages positions it opened (`data/state_<mode>.json`). Holdings you
   buy yourself are never touched.
-- Order throttle, 3% daily loss halt, 35% position cap, no leverage, 0.5% spread guard.
+- Order throttle, 2% daily loss halt, 25% position cap, no leverage, 0.5% spread guard,
+  risk-on market filter.
 - Entries pause automatically if the Toss US commission rises above
   `TRADER_MAX_COMMISSION`. The rate is re-checked every session (the API listed the
   0.1% rate as valid until 2026-10-08).

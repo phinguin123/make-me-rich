@@ -50,8 +50,8 @@ class Settings:
     # Risk
     risk_per_trade: float = field(default_factory=lambda: _float("TRADER_RISK_PER_TRADE", 0.01))
     max_positions: int = field(default_factory=lambda: _int("TRADER_MAX_POSITIONS", 4))
-    max_position_pct: float = field(default_factory=lambda: _float("TRADER_MAX_POSITION_PCT", 0.35))
-    daily_loss_limit: float = field(default_factory=lambda: _float("TRADER_DAILY_LOSS_LIMIT", 0.03))
+    max_position_pct: float = field(default_factory=lambda: _float("TRADER_MAX_POSITION_PCT", 0.25))
+    daily_loss_limit: float = field(default_factory=lambda: _float("TRADER_DAILY_LOSS_LIMIT", 0.02))
     max_orders_per_10min: int = field(default_factory=lambda: _int("TRADER_MAX_ORDERS_10MIN", 20))
     max_orders_per_day: int = field(default_factory=lambda: _int("TRADER_MAX_ORDERS_DAY", 120))
     hold_overnight: bool = field(default_factory=lambda: _bool("TRADER_HOLD_OVERNIGHT", True))

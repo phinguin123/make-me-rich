@@ -8,8 +8,15 @@ services:
     env_file: ../.env
     environment:
       TZ: Asia/Seoul
+      TRADER_HOST: 0.0.0.0  # inside the container; the host side is limited by TRADER_BIND below
     volumes:
       - ./backend/data:/app/backend/data
     ports:
       - "${TRADER_BIND:-127.0.0.1}:5050:5050"
     restart: unless-stopped
+    stop_grace_period: 45s  # let the engine cancel/settle orders and save state on shutdown
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

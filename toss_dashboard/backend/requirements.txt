@@ -6,3 +6,5 @@ pyarrow>=15
 python-dotenv>=1.0
 uvicorn>=0.29
 websockets>=13
+tzdata>=2024.1
+requests>=2.31

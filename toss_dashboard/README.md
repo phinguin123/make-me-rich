@@ -378,12 +378,17 @@ bot positions, plus positions, stocks in play, closed trades, macro tiles and th
 engine log. UI development: `cd toss_dashboard/frontend && npm install && npm run dev`
 (proxies to :5050).
 
-Docker (multi-arch, works on Oracle A1 / arm64):
+Docker (multi-arch, works on Oracle A1 / arm64). From this machine, one command copies the
+code, `.env` and state to the server, builds the image there and starts it:
 
 ```bash
 cd toss_dashboard
-docker compose up -d --build
+./deploy_oracle.sh ubuntu@<server-ip>      # stop the local engine first
 ```
+
+Or on the server itself: `cd toss_dashboard && docker compose up -d --build`. The container
+restarts by itself after crashes and reboots (`restart: unless-stopped`). Logs:
+`docker compose logs -f`, or `backend/data/logs/trader.log` on the server.
 
 The container publishes on 127.0.0.1 by default. Reach it with
 `ssh -L 5050:localhost:5050 <server>`, or set `TRADER_BIND=0.0.0.0` together with a

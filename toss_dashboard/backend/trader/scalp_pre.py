@@ -159,13 +159,22 @@ class PremarketDip:
         if now.time() >= self.cfg.cutoff:
             self.st.status, self.st.note = "done", "started after the 09:00 entry cutoff"
             return
-        try:
-            res = await self.sl.toss.candles(self.SYMBOL, "1d", count=30)
-            closes = [float(c["closePrice"]) for c in res.get("candles", [])
-                      if datetime.fromisoformat(c["timestamp"]).date() < today][:21]
-        except TossAPIError as exc:
-            self.st.status, self.st.note = "standing_aside", f"SOXL history failed ({exc})"
-            return
+        self.st.status, self.st.note = "standing_aside", "loading SOXL history"
+        closes = None
+        while closes is None:
+            try:
+                res = await self.sl.toss.candles(self.SYMBOL, "1d", count=30)
+                closes = [float(c["closePrice"]) for c in res.get("candles", [])
+                          if datetime.fromisoformat(c["timestamp"]).date() < today][:21]
+            except TossAPIError as exc:  # e.g. this machine's IP not yet in the Toss allowlist: keep trying
+                if (self.now or datetime.now(ET)).time() >= self.cfg.cutoff:
+                    self.st.note = f"SOXL history unavailable before 09:00 ({exc})"
+                    return
+                if self.st.note == "loading SOXL history":
+                    self._log(f"SOXL history failed ({exc}); retrying every minute", logging.WARNING)
+                self.st.note = f"SOXL history failed ({exc}); retrying"
+                self.sl.save()
+                await asyncio.sleep(self.sl.retry_seconds)
         rets = [math.log(a / b) for a, b in zip(closes[:-1], closes[1:]) if a > 0 and b > 0]
         if len(rets) < 15:
             self.st.status, self.st.note = "standing_aside", "not enough SOXL history"

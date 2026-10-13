@@ -137,3 +137,21 @@ def test_state_survives_restart(tmp_path):
     again._load()
     assert again.pre.st.qty == 10 and again.pre.st.status == "in_trade"
     assert abs(again.equity() - sleeve.equity()) < 1e-6
+
+
+def test_history_failure_is_retried(tmp_path):
+    from trader.toss.client import TossAPIError
+
+    sleeve, md, _ = make(tmp_path)
+    sleeve.retry_seconds = 0.01
+    good, calls = sleeve.toss.candles, {"n": 0}
+
+    async def flaky(symbol, interval, count=200, before=None):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise TossAPIError(403, "access_denied", "IP address not allowed")
+        return await good(symbol, interval, count, before)
+
+    sleeve.toss.candles = flaky
+    tick(sleeve, at(7, 29))
+    assert sleeve.pre.st.status == "watching" and calls["n"] == 3

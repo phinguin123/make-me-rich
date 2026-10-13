@@ -12,6 +12,7 @@ market showed no edge after costs and is not traded.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -68,6 +69,7 @@ class ScalpSleeve:
         self.realized = 0.0
         self.st = ScalpState()
         self.busy = False
+        self.retry_seconds = 60.0  # Toss unreachable (e.g. IP not yet allowlisted): retry the regime fetch
         self.pre = PremarketDip(self) if settings.scalp_pre else None
         self._load()
 
@@ -109,13 +111,23 @@ class ScalpSleeve:
             self.log(f"Scalp: {carried[1]:g} {carried[0]} carried overnight — will sell at the open", logging.WARNING)
             self.save()
             return
-        try:
-            res = await self.toss.candles("SOXX", "1d", count=self.cfg.regime_ma + 10)
-            closes = [float(c["closePrice"]) for c in res.get("candles", [])
-                      if datetime.fromisoformat(c["timestamp"]).date() < today][: self.cfg.regime_ma]
-        except TossAPIError as exc:
-            self.log(f"Scalp: SOXX history failed ({exc}); standing aside today", logging.WARNING)
-            self.st.regime, self.st.status = "unknown", "standing_aside"
+        self.st.status, self.st.note = "standing_aside", "loading the SOXX regime"
+        closes = None
+        for attempt in range(60):
+            try:
+                res = await self.toss.candles("SOXX", "1d", count=self.cfg.regime_ma + 10)
+                closes = [float(c["closePrice"]) for c in res.get("candles", [])
+                          if datetime.fromisoformat(c["timestamp"]).date() < today][: self.cfg.regime_ma]
+                break
+            except TossAPIError as exc:
+                if attempt == 0:
+                    self.log(f"Scalp: SOXX history failed ({exc}); retrying every minute", logging.WARNING)
+                self.st.regime, self.st.note = "unknown", f"SOXX history failed ({exc}); retrying"
+                self.save()
+                await asyncio.sleep(self.retry_seconds)
+        if closes is None:
+            self.log("Scalp: SOXX history unavailable for an hour; standing aside today", logging.WARNING)
+            self.st.note = "SOXX history unavailable; standing aside today"
             self.save()
             return
         if len(closes) < int(self.cfg.regime_ma * 0.6):
@@ -240,8 +252,6 @@ class ScalpSleeve:
         self.save()
 
     async def _wait(self, order: Order, seconds: float) -> None:
-        import asyncio
-
         end = asyncio.get_running_loop().time() + seconds
         while not order.done and asyncio.get_running_loop().time() < end:
             try_fill = getattr(self.broker, "try_fill", None)

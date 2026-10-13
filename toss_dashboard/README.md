@@ -245,6 +245,46 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
+## Fastest realistic path from $12.4k to $100k (`trader/research/goal.py`)
+
+**Method:** 5,000 ten-year paths per strategy, block-bootstrapped from daily returns.
+- "Ruin" means the account at some point falls below half of everything put in.
+- The bot's sleeves come from 2021–2026, a strong period, so they're also shown with every edge
+  halved.
+- The 3x buy-and-hold lines use 1986/1995–2026, which includes 2000–02 and 2008.
+
+| Strategy, no added savings | Median years to $100k | P(by 5 yrs) | P(ruin) | 5-yr bad case (10th pct) |
+|---|---|---|---|---|
+| Live 25/60/15 | 8.4 | 0% | 0% | $25.7k |
+| 50% scalp / 50% swing | 7.0 | 10% | 0% (1% halved) | $28.4k |
+| 50 scalp / 30 SOXL dip / 20 SOXL trend | 6.3 | 18% | 0% (1% halved) | $34.7k |
+| 100% scalp at 100%/trade | 5.9 | 28% | 3% (28% halved) | $19.3k |
+| TQQQ buy & hold | 4.5 | 33% | **61%** | $2.9k |
+| SOXL buy & hold | never (median) | 35% | **85%** | $0.5k |
+
+| Live 25/60/15, monthly savings | Median years to $100k |
+|---|---|
+| $0 | 8.4 |
+| $500 | 5.2 |
+| $1,000 | 3.8 |
+
+At $500/month every bot mix gets there in 4.0–5.2 years (6.3–7.3 with edges halved).
+
+**Findings:**
+- **3x buy-and-hold is a lottery, not a faster route.** It gives a 23–35% chance of $100k
+  within 3–5 years and a 61–85% chance of losing half or more.
+- **Within the bot's strategies, more aggression saves 1–2 years at little ruin cost.** Scalp
+  never holds overnight and swing targets its volatility.
+- **Monthly savings move the date more than any strategy change.**
+
+**Sector momentum** (`trader/research/sector_mom.py`, 9 SPDR sectors and 16 industry ETFs,
+2008–2026) didn't beat QQQ buy & hold (+16.3%/yr):
+- 1x, best variant: about +10%/yr.
+- 3x with a trend filter and vol target: +17%/yr, −53% max DD.
+- 3x concentrated in the top 1–2 sectors: −29% to −6%/yr, −96% to −100% max DD.
+
+It's not used.
+
 ## Why swing doesn't own the 10x stocks (checked 2026-10-13)
 
 **How rare they are.** Of the 999 most-traded US stocks, Oct 2025 to Oct 2026:

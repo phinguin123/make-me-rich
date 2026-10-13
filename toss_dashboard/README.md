@@ -303,6 +303,23 @@ year +1.9%. The phases stay. Edge-monitor expectation: +0.66% per trade, about 1
 - **After-hours dips** (16:00–20:00 ET): strict-fill results were flat or negative; SOXS lost 1.8%
   per trade. They're mostly news (earnings) that keeps going.
 
+## Next candidate: the intraday stocks-in-play sleeve (`trader/research/intraday_add.py`)
+
+The built but switched-off safe profile, on SIP data (2024-01 to 2026-10): +26%/yr, Sharpe 1.00,
+max DD −4.8%, about 109 trades a year, in the market 27% of days. Its daily correlation with scalp
+and swing is about 0.
+
+| Mix (scalp / swing / intraday), 2024–26 | CAGR | Sharpe | Max DD |
+|---|---|---|---|
+| 30 / 70 / 0 (live) | +47.7% | 2.22 | −13.1% |
+| 30 / 60 / 10 | +46.6% | 2.35 | −12.7% |
+| 30 / 50 / 20 | +45.5% | 2.41 | −12.4% |
+
+It's not enabled yet:
+- Its history is short (2.7 years) and has no bear market.
+- It shouldn't change in the same release as the 14-name book, or neither can be judged. Revisit
+  after a few weeks of live book results.
+
 ## Pre-market dip beyond SOXL (`trader/research/pre_multi.py`)
 
 **Setup.** The exact live rule, not re-tuned, applied to 18 liquid names, 2021–2026 SIP: the dip is

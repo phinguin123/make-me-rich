@@ -352,6 +352,11 @@ VWAP bug fix, had suggested 07:00 ET. On the book (3 slots, QQQ filter), by star
   - One pocket held in both halves: an opening-range reversal (5-minute range) after a flush of 2+ dips
     below the pre-market VWAP, +1.0% to +1.5% per trade. But it's ~15 trades a year (t ≈ 1.5): too
     thin to trust. Watch list, not traded.
+- **Afternoon breakouts** (2026-10-14, the price pattern news rallies leave, e.g. SOXL 117.8 to 126 on
+  2026-10-13 after Michael Dell's "not a bubble" and Gemini 4 at 12:00-12:15 ET). Rule: first close above
+  the 09:30-11:30 high between 11:30 and 14:30, held to 15:55. Lost −0.2% to −0.3% per trade on the 14
+  names (~6,000 trades). SOXL was flat overall and lost 0.15-0.25% in uptrends, worse in 2024-26. The
+  result is the same with a VWAP stop, a 1-dip stop or no stop, and on "already up a dip" days.
 - **Overnight hold** (buy at 15:55, sell at the next 05:30 pre-market or 09:30 open): −0.07% to −0.19%
   per trade on the 14 names, with or without trend filters. The overnight drift is smaller than the
   0.2% round trip.

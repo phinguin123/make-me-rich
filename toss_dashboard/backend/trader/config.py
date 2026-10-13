@@ -64,6 +64,9 @@ class Settings:
     alloc_scalp: float = field(default_factory=lambda: _float("TRADER_ALLOC_SCALP", 0.0))
     alloc_swing: float = field(default_factory=lambda: _float("TRADER_ALLOC_SWING", 0.0))
     alloc_rebalance: str = field(default_factory=lambda: _env("TRADER_ALLOC_REBALANCE", "yearly").lower())  # yearly | off
+    # Glide path (overrides the fixed shares above): "threshold:scalp/swing,..." on bot money, one-way.
+    # Default plan (research/goal.py): growth 50/50 under $50k, 30/70 to $100k, 20/50 + 30% cash above.
+    alloc_phases: str = field(default_factory=lambda: _env("TRADER_ALLOC_PHASES"))
     # Account drawdown breaker: pause new entries when scalp + swing + reserve is this far below its peak (0 = off)
     account_dd_halt: float = field(default_factory=lambda: _float("TRADER_ACCOUNT_DD_HALT", 0.20))
 

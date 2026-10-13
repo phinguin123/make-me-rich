@@ -72,8 +72,9 @@ class Engine:
         self.allocator = (Allocator({"scalp": settings.alloc_scalp, "swing": settings.alloc_swing}, self.scalp, self.swing,
                                     self.broker, DATA_DIR / f"alloc_{self.broker.name}.json", self.log,
                                     yearly=settings.alloc_rebalance == "yearly", halt_dd=settings.account_dd_halt,
-                                    on_breach=self._on_breach, is_paused=lambda: self.paused)
-                          if self.scalp and self.swing and settings.alloc_scalp + settings.alloc_swing > 0 else None)
+                                    on_breach=self._on_breach, is_paused=lambda: self.paused,
+                                    phases=Allocator.parse_phases(settings.alloc_phases) if settings.alloc_phases else None)
+                          if self.scalp and self.swing and (settings.alloc_phases or settings.alloc_scalp + settings.alloc_swing > 0) else None)
         self._swing_prep_day: date | None = None
         self._swing_trade_day: date | None = None
         self.macro_ext: dict = {}

@@ -167,3 +167,25 @@ def test_waits_instead_of_shrinking_when_cash_is_used_outside_the_bot(tmp_path):
     assert scalp.cash == 3720.0
     tick(alloc, datetime(2026, 10, 13, 2, 6, tzinfo=ET))
     assert scalp.cash == pytest.approx(3100.0) and swing.cash == pytest.approx(7440.0) and alloc.state["reserve"] == pytest.approx(1860.0)
+
+
+PHASES = Allocator.parse_phases("0:0.50/0.50,50000:0.30/0.70,100000:0.20/0.50")
+
+
+def test_glide_path_steps_down_one_way_and_deposits_count(tmp_path):
+    alloc, scalp, swing = make(tmp_path, swing_fresh=False)
+    alloc.phases, alloc.targets = PHASES, {"scalp": 0.5, "swing": 0.5}
+    alloc.state = {"targets": {"scalp": 0.25, "swing": 0.60}, "last": "2026-10-13", "history": [], "reserve": 1860.0,
+                   "hwm": 12400.0, "breached": False, "pending": 0.0, "phase": 0}
+    scalp.cash, swing.cash = 3100.0, 7440.0
+    alloc.deposit(108.27)  # account had $12,508.27 after the user sold everything
+    tick(alloc, datetime(2026, 10, 13, 3, 30, tzinfo=ET))
+    assert scalp.cash == pytest.approx(6254.14, abs=0.01) and swing.cash == pytest.approx(6254.13, abs=0.02)
+    assert alloc.state["reserve"] == pytest.approx(0.0, abs=0.02) and alloc.state["pending"] == 0.0
+    assert alloc.state["hwm"] == pytest.approx(12508.27)  # new money is not a gain
+    scalp.cash = 50000.0  # the account grows past $50k: phase 2 (30/70)
+    tick(alloc, datetime(2026, 11, 2, 3, 30, tzinfo=ET))
+    assert alloc.state["phase"] == 1 and scalp.cash == pytest.approx(0.3 * (50000 + 6254.13), abs=1)
+    scalp.cash = 1000.0  # and falls back: no return to the riskier phase
+    tick(alloc, datetime(2026, 11, 3, 3, 30, tzinfo=ET))
+    assert alloc.state["phase"] == 1 and alloc.targets == {"scalp": 0.3, "swing": 0.7}

@@ -3,20 +3,24 @@
 Fully automatic US-stock trader for a Toss Securities account, with a live dashboard.
 One process runs the engine, the REST/WebSocket API and the UI.
 
-### What runs live (since 2026-10-13): survival first
+### What runs live: a 3-phase glide path to $100k (since 2026-10-13)
 
-| Money | Strategy | When (KST, US summer time) | Holds |
-|---|---|---|---|
-| **25% scalp** | Pre-market SOXL dip (below) | buys 20:00–22:00, out by 22:25 | minutes to 2 hours |
-| (same pot) | Opening-range breakout SOXL/SOXS, semis downtrends only | range 22:30–23:00, entries to 00:30, out by 04:57 | minutes to hours, never overnight |
-| **60% swing** | Monthly momentum, 10 stocks, 20% volatility target | trades 22:36 on rebalance days | weeks to months |
-| **15% reserve** | Cash, never traded | — | — |
+The bot's money moves to a safer mix as it grows, one way only (`TRADER_ALLOC_PHASES`):
 
-Backtest of this mix (2021-01 to 2026-10, Toss costs, rebalanced yearly):
-- **Returns:** +24.3%/yr (+21.8% after Korean tax), Sharpe 1.39.
-- **Drawdown:** −14.6% at worst, and every calendar year was positive.
-- **Bad cases:** a 1-in-20 bad year is −1%. In a crash replay (SOXL sleeves' worst year since
-  1995, swing −30%, scalp −15% at once) the account loses about 22%.
+| Phase | Bot money | Scalp (SOXL/SOXS, intraday) | Swing (momentum) | Cash reserve | Backtest |
+|---|---|---|---|---|---|
+| **1. Growth (now)** | under $50k | 50% | 50% | — | +30.9%/yr, max DD −20%, bad year −4.8% |
+| 2. Build | $50k–$100k | 30% | 70% | — | +28.5%/yr, max DD −17% |
+| 3. Keep | over $100k | 20% | 50% | 30% | +20.0%/yr, max DD −12% |
+
+- **Timing (KST, US summer time):**
+  - Pre-market dip: buys 20:00–22:00, out by 22:25.
+  - Breakout: 22:30–04:57, only in semis downtrends, never held overnight.
+  - Swing: trades at 22:36 on rebalance days.
+- **Adding or removing money:** after you deposit or withdraw in Toss, use **Add to bot / Take
+  out** on the dashboard (`POST /api/allocation/deposit?amount=`). The bot never claims cash by
+  itself, because you may be using it for your own trades.
+- **Yearly rebalance:** to the current phase's mix, on the first trading day of each year.
 
 **Safety layers:**
 - **Never overnight:** scalp positions always close the same day.
@@ -26,7 +30,7 @@ Backtest of this mix (2021-01 to 2026-10, Toss costs, rebalanced yearly):
 - **Edge monitor:** cuts an edge's size in half or switches it off when live trades fall clearly
   below the backtest.
 - **Drawdown breaker:** at −20% from the peak, new entries pause; exits and swing sells still run.
-- **Cash reserve:** 15% is never traded.
+- **Cash reserve:** 30% in phase 3, never traded.
 - **Volatility target:** swing holds less when markets get wild.
 - **Your own holdings:** the bot never touches them.
 

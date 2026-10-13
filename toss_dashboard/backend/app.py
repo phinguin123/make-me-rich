@@ -138,6 +138,15 @@ async def api_edge_enable(name: str):
     return {"enabled": name}
 
 
+@app.post("/api/allocation/deposit", dependencies=[api])
+async def api_deposit(amount: float):
+    """Add (positive) or remove (negative) USD from the bot's books, e.g. after you deposit savings."""
+    if not host.engine or not host.engine.allocator:
+        return {"ok": False, "error": "allocator off"}
+    host.engine.allocator.deposit(amount)
+    return {"ok": True, "pending": host.engine.allocator.state["pending"]}
+
+
 @app.websocket("/ws")
 async def ws(socket: WebSocket):
     if not token_ok(socket.query_params.get("token")):

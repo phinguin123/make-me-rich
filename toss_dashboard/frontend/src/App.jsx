@@ -234,7 +234,11 @@ export default function App() {
 
       {s.allocation?.enabled && (
         <div className="mb-4">
-          <AllocationPanel alloc={s.allocation} />
+          <AllocationPanel
+            alloc={s.allocation}
+            busy={busy}
+            onDeposit={(amt) => call(`/api/allocation/deposit?amount=${amt}`, `${amt > 0 ? "Add" : "Take"} $${Math.abs(amt)} ${amt > 0 ? "to" : "out of"} the bot? Only money that is actually in the Toss account can be used.`)}
+          />
         </div>
       )}
 

@@ -17,6 +17,12 @@ file) counts as zero, so turning on a new sleeve can't double-count the account.
 Targets that sum to less than 100% leave a cash reserve the bot never trades (tracked here so
 it stays part of the total at the next rebalance).
 
+Glide path (optional): phases [(threshold, targets)] on the bot's money. The bot moves to a later
+(safer) phase once its money reaches that phase's threshold and never steps back by itself.
+
+Money in / out: deposit(amount) adds (or, negative, removes) money from the bot's books; it is spread
+over the sleeves at the next safe moment (the account must actually hold it).
+
 Drawdown circuit breaker: if scalp + swing + reserve falls `halt_dd` below its high-water mark,
 new entries are paused (scalp entries and swing buys; exits and swing sells still run) and a
 warning is raised. Pressing Resume on the dashboard acknowledges it and resets the high-water
@@ -37,17 +43,56 @@ ET = ZoneInfo("America/New_York")
 class Allocator:
     def __init__(self, targets: dict[str, float], scalp, swing, broker, path: Path, log: Callable[[str, int], None],
                  yearly: bool = True, halt_dd: float = 0.0, on_breach: Callable[[str], None] | None = None,
-                 is_paused: Callable[[], bool] = lambda: False):
+                 is_paused: Callable[[], bool] = lambda: False, phases: list[tuple[float, dict]] | None = None):
         self.targets = {k: round(float(v), 4) for k, v in targets.items()}
+        self.phases = sorted(phases or [], key=lambda p: p[0])
         self.scalp, self.swing, self.broker, self.path, self.log, self.yearly = scalp, swing, broker, path, log, yearly
         self.halt_dd, self.on_breach, self.is_paused = halt_dd, on_breach, is_paused
         self.state: dict = {"targets": {}, "last": "", "history": [], "reserve": 0.0, "hwm": 0.0, "breached": False}
         if path.exists():
             self.state.update(json.loads(path.read_text()))
+        self.state.setdefault("pending", 0.0)
+        self.state.setdefault("phase", 0)
+        if self.phases:
+            self.targets = self._phase_targets(int(self.state["phase"]))
         self.busy = False
         self.note = ""
         self._px_at: datetime | None = None  # last swing price refresh (the breaker needs current values)
         self._retry_at: datetime | None = None  # after a postponed rebalance
+
+    @staticmethod
+    def parse_phases(spec: str) -> list[tuple[float, dict]]:
+        """"0:0.50/0.50,50000:0.30/0.70,100000:0.20/0.50" -> [(0, {scalp, swing}), ...]"""
+        out = []
+        for part in [p for p in spec.replace(" ", "").split(",") if p]:
+            thr, mix = part.split(":")
+            sc, sw = mix.split("/")
+            out.append((float(thr), {"scalp": float(sc), "swing": float(sw)}))
+        return out
+
+    def _phase_targets(self, i: int) -> dict:
+        return {k: round(float(v), 4) for k, v in self.phases[min(i, len(self.phases) - 1)][1].items()}
+
+    def update_phase(self) -> None:
+        if not self.phases or not self.state.get("last"):
+            return
+        total = self.total() + float(self.state.get("pending", 0.0))
+        reached = max(i for i, (thr, _) in enumerate(self.phases) if total >= thr or i == 0)
+        if reached > int(self.state.get("phase", 0)):  # one-way: only towards safer phases
+            self.state["phase"] = reached
+            self.targets = self._phase_targets(reached)
+            self.log(f"Glide path: bot money ${total:,.0f} reached ${self.phases[reached][0]:,.0f} -> phase {reached + 1}: "
+                     f"scalp {self.targets['scalp']:.0%} / swing {self.targets['swing']:.0%}", logging.WARNING)
+            self.save()
+
+    def deposit(self, amount: float) -> None:
+        """Add (positive) or remove (negative) money from the bot's books; spread at the next safe moment."""
+        self.state["pending"] = round(float(self.state.get("pending", 0.0)) + float(amount), 2)
+        self.note = ""
+        self._retry_at = None
+        self.log(f"Allocator: ${amount:+,.2f} {'added to' if amount >= 0 else 'removed from'} the bot "
+                 f"(pending ${self.state['pending']:+,.2f}, applied when the sleeves are flat)", logging.INFO)
+        self.save()
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
@@ -56,6 +101,8 @@ class Allocator:
 
     # ── scheduling ────────────────────────────────────────────────────────
     def due(self, today: date) -> str:
+        if abs(float(self.state.get("pending", 0.0))) >= 0.01:
+            return "deposit" if self.state["pending"] > 0 else "withdrawal"
         if self.state.get("targets") != self.targets:
             return "targets changed"
         last = self.state.get("last") or ""
@@ -110,6 +157,7 @@ class Allocator:
             self._px_at = now
             spawn(self._refresh_prices())
         self.check_drawdown()
+        self.update_phase()
         reason = self.due(now.date())
         if not reason:
             self.note = ""
@@ -149,7 +197,8 @@ class Allocator:
             return
         owned = {"scalp": 0.0 if sc.fresh else sc.equity(), "swing": 0.0 if sw.fresh else sw.value(),
                  "reserve": float(self.state.get("reserve", 0.0))}
-        total = sum(owned.values())
+        pending = float(self.state.get("pending", 0.0))
+        total = max(0.0, sum(owned.values()) + pending)
         if total <= 0:  # very first run of both sleeves: start from the configured pots
             total = sc.cash + sw.cash
         try:  # the account must actually hold the money the sleeves own
@@ -182,6 +231,9 @@ class Allocator:
                  "scalp": tgt_scalp, "swing": tgt_swing, "reserve": round(total - tgt_scalp - tgt_swing, 2), "targets": self.targets}
         self.state["targets"], self.state["last"] = dict(self.targets), now.date().isoformat()
         self.state["reserve"] = round(total - tgt_scalp - tgt_swing, 2)
+        self.state["pending"] = 0.0
+        if pending:  # deposits move the high-water mark too: new money isn't a gain
+            self.state["hwm"] = max(0.0, float(self.state.get("hwm", 0.0)) + pending)
         self.state["hwm"] = max(float(self.state.get("hwm", 0.0)), total)
         self.state.setdefault("history", []).append(entry)
         self.save()
@@ -197,7 +249,11 @@ class Allocator:
         total = sc_val + sw_val + reserve
         hwm = float(self.state.get("hwm", 0.0))
         last = self.state.get("last") or ""
-        return {"enabled": True, "targets": self.targets, "last": last,
+        phase = int(self.state.get("phase", 0))
+        nxt = self.phases[phase + 1][0] if self.phases and phase + 1 < len(self.phases) else None
+        return {"enabled": True, "targets": self.targets, "last": last, "pending": float(self.state.get("pending", 0.0)),
+                "phase": ({"index": phase + 1, "count": len(self.phases), "next_at": nxt,
+                           "plan": [{"from": thr, **mix} for thr, mix in self.phases]} if self.phases else None),
                 "next": f"first trading day of {int(last[:4]) + 1}" if last and self.yearly else "",
                 "current": {"scalp": sc_val, "swing": sw_val, "reserve": reserve, "total": total,
                             "scalp_share": sc_val / total if total else 0.0, "swing_share": sw_val / total if total else 0.0,

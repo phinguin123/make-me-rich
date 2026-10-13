@@ -1,3 +1,4 @@
+import { useState } from "react";
 import Panel from "./Panel";
 import { money, pct } from "../format";
 
@@ -18,7 +19,8 @@ function Bar({ label, value, share, target }) {
   );
 }
 
-export default function AllocationPanel({ alloc }) {
+export default function AllocationPanel({ alloc, onDeposit, busy }) {
+  const [amount, setAmount] = useState("");
   if (!alloc?.enabled) return null;
   const c = alloc.current ?? {};
   const t = alloc.targets ?? {};
@@ -47,6 +49,37 @@ export default function AllocationPanel({ alloc }) {
           </div>
         )}
       </div>
+      {alloc.phase && (
+        <div className="px-3 pb-1 text-[11px] text-zinc-400">
+          Phase {alloc.phase.index} of {alloc.phase.count}
+          {" · "}
+          {alloc.phase.plan.map((p, i) => (
+            <span key={i} className={i + 1 === alloc.phase.index ? "text-sky-300" : "text-zinc-500"}>
+              {i ? " → " : ""}from {money(p.from)}: {pct(p.scalp, 0)}/{pct(p.swing, 0)}
+            </span>
+          ))}
+        </div>
+      )}
+      {onDeposit && (
+        <div className="flex flex-wrap items-center gap-2 px-3 pb-2 text-[11px] text-zinc-400">
+          <span>Money in/out of the bot (USD, after you deposit or withdraw in Toss):</span>
+          <input
+            className="w-24 rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-zinc-200"
+            inputMode="decimal" placeholder="500" value={amount} onChange={(e) => setAmount(e.target.value)}
+          />
+          {[["Add to bot", 1], ["Take out", -1]].map(([label, sign]) => (
+            <button
+              key={label}
+              className="rounded border border-zinc-700 px-2 py-0.5 text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
+              disabled={busy || !(parseFloat(amount) > 0)}
+              onClick={() => { onDeposit(sign * parseFloat(amount)); setAmount(""); }}
+            >
+              {label}
+            </button>
+          ))}
+          {alloc.pending ? <span className="text-amber-300">pending {money(alloc.pending)} (applied when the sleeves are flat)</span> : null}
+        </div>
+      )}
       <div className="px-3 pb-2 text-[11px] text-zinc-500">
         {alloc.note ? `${alloc.note} · ` : ""}
         {last ? `last rebalance ${last.date} (${last.reason}): ${money(last.total)} → scalp ${money(last.scalp)} / swing ${money(last.swing)}${last.reserve ? ` / reserve ${money(last.reserve)}` : ""}` : "not rebalanced yet"}

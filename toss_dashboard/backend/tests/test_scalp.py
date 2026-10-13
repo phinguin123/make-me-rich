@@ -33,7 +33,7 @@ def make(tmp_path, closes):
 
 def quote(md, sym, px):
     st = md.get(sym)
-    st.last, st.last_ts, st.bid, st.ask = px, datetime.now(ET), px - 0.01, px + 0.01
+    st.last, st.last_ts, st.bid, st.ask, st.quote_ts = px, datetime.now(ET), px - 0.01, px + 0.01, datetime.now(ET)
 
 
 def opening_range(md, low=100.0, high=104.0):
@@ -143,3 +143,27 @@ def test_one_day_override_trades_in_uptrend(tmp_path):
     sleeve.st.day = ""
     asyncio.run(sleeve.prepare(TODAY))
     assert sleeve.st.status == "standing_aside"  # override for another day has no effect
+
+
+def test_single_fat_finger_print_does_not_stop_out(tmp_path):
+    sleeve, md = make(tmp_path, [90] + [100] * 49)
+    asyncio.run(sleeve.prepare(TODAY))
+    opening_range(md)
+    sleeve.on_minute(OPEN + timedelta(minutes=31), OPEN)
+    quote(md, "SOXL", 104.2)
+    run(sleeve, OPEN + timedelta(minutes=35))
+    assert sleeve.st.side == "SOXL" and sleeve.st.qty > 0
+    st = md.get("SOXL")
+    st.last, st.last_ts = 92.0, datetime.now(ET)  # one bad print far below the range, bid/ask still normal
+    st.bid, st.ask, st.quote_ts = 104.1, 104.3, datetime.now(ET)
+    t0 = OPEN + timedelta(minutes=40)
+    run(sleeve, t0)
+    assert sleeve.st.qty > 0  # ignored: the quote doesn't confirm it
+    st.last = 104.15  # price is back above: the crossing resets
+    run(sleeve, t0 + timedelta(seconds=1))
+    st.last = 99.5  # a real break: trades stay below for 3 seconds even if quotes are stale
+    st.quote_ts = datetime.now(ET) - timedelta(seconds=30)
+    run(sleeve, t0 + timedelta(seconds=2))
+    assert sleeve.st.qty > 0
+    run(sleeve, t0 + timedelta(seconds=5.5))
+    assert sleeve.st.qty == 0 and sleeve.st.trades[-1]["reason"] == "stop"

@@ -41,6 +41,7 @@ class SymbolState:
     ask_size: float = 0.0
     bars: dict[datetime, Bar] = field(default_factory=dict)  # today's regular-session bars by end time
     sip_ts: datetime | None = None  # local time of the last SIP trade/quote (None: Toss-only symbol)
+    quote_ts: datetime | None = None  # local time bid/ask were last updated
 
     @property
     def mid(self) -> float:
@@ -120,6 +121,7 @@ class MarketData:
         elif self.sip_fresh(symbol):
             return
         s.bid, s.bid_size, s.ask, s.ask_size = bid, bid_sz, ask, ask_sz
+        s.quote_ts = datetime.now(ET)
         if not s.last:
             s.last = (bid + ask) / 2
 

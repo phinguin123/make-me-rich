@@ -41,6 +41,7 @@ class ScalpConfig:
     regime_ma: int = 50
     position_frac: float = 0.5  # of sleeve equity per trade (1.0 doubled both return and drawdown in the backtest)
     max_chase: float = 0.004
+    confirm_seconds: float = 3.0  # a level counts as crossed when the bid/ask agrees, or the price stays past it this long
 
 
 @dataclass
@@ -73,6 +74,7 @@ class ScalpSleeve:
         self.realized = 0.0
         self.st = ScalpState()
         self.busy = False
+        self._cross: dict[str, datetime] = {}  # first time each level crossing was seen (fat-finger filter)
         self.retry_seconds = 60.0  # Toss unreachable (e.g. IP not yet allowlisted): retry the regime fetch
         self.pre = PremarketDip(self) if settings.scalp_pre else None
         self.fresh = not self.path.exists()  # never ran: owns no money yet (see allocator)
@@ -181,17 +183,37 @@ class ScalpSleeve:
                 self.save()
             elif self.entries_blocked():
                 return  # paused / risk halt: keep watching, never enter
-            elif soxl > self.st.or_high:
+            elif self._crossed("up", soxl > self.st.or_high, lambda b, a: b > self.st.or_high, now):
                 self.busy = True  # set before the task runs so the next tick can't fire a duplicate
                 spawn(self._enter("SOXL", self.st.or_high))
-            elif soxl < self.st.or_low:
+            elif self._crossed("down", soxl < self.st.or_low, lambda b, a: a < self.st.or_low, now):
                 self.busy = True
                 spawn(self._enter("SOXS", None))
         elif self.st.status == "in_trade" and self.st.qty > 0:
-            if (self.st.side == "SOXL" and soxl <= self.st.or_low) or (self.st.side == "SOXS" and soxl >= self.st.or_high):
+            stop = (self._crossed("stop", soxl <= self.st.or_low, lambda b, a: b <= self.st.or_low, now) if self.st.side == "SOXL"
+                    else self._crossed("stop", soxl >= self.st.or_high, lambda b, a: a >= self.st.or_high, now))
+            if stop:
                 jr("D", "orb", "stop", {"px": soxl, "side": self.st.side, "hi": self.st.or_high, "lo": self.st.or_low})
                 self.busy = True
                 spawn(self._exit("stop", claimed=True))
+
+    def _crossed(self, key: str, by_last: bool, by_quote: Callable[[float, float], bool], now: datetime) -> bool:
+        """Fat-finger filter: a single trade print past a level is not enough (pre-market and the open see
+        spikes of 2-14% that revert within a minute). It counts when the SIP bid/ask (fresh within 5 s)
+        is also past the level, or when the last price has stayed past it for `confirm_seconds`."""
+        if not by_last:
+            self._cross.pop(key, None)
+            return False
+        q = self.market.get("SOXL")
+        if q.bid and q.ask and q.quote_ts and (datetime.now(ET) - q.quote_ts.astimezone(ET)).total_seconds() < 5:
+            if by_quote(q.bid, q.ask):
+                return True
+        first = self._cross.setdefault(key, now)
+        if (now - first).total_seconds() >= self.cfg.confirm_seconds:
+            return True
+        if first == now:
+            jr("D", "orb", "unconfirmed", {"key": key, "last": q.last, "bid": q.bid, "ask": q.ask})
+        return False
 
     def _fresh(self, sym: str) -> float:
         st = self.market.get(sym)

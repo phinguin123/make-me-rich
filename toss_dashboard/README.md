@@ -249,6 +249,35 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
+## Fat-finger spikes and stops (measured 2026-10-13)
+
+**Spike frequency.** Spikes are 1-minute wicks below the prevailing price that recovered within
+the same minute (SOXL + SOXS, SIP 2021–2026).
+
+| Window (ET) | Days with a ≥2% spike | ≥3% | ≥5% |
+|---|---|---|---|
+| Pre-market 07:00–09:30 | 40% | 20% | 4.7% |
+| Pre-market 04:00–05:00 | 13% | 6.5% | 1.7% |
+| Open 09:30–09:35 | 2.6% | 0.3% | 0% |
+| Regular 10:00–15:55 | 2.4% | 0.8% | 0.1% |
+
+The deepest was −14%, often at 08:00 or 08:30 (data releases).
+
+**Toss's feed is worse.** Toss's own feed (what triggers Toss conditional orders) shows lows the
+consolidated market never printed. A low ≥2% below the SIP low happened on 24% of pre-market days,
+12% of after-hours days and 0.4% of regular-session days. Examples: −18% on 2026-03-10 08:00,
+−13% on 2026-06-25 07:01.
+
+**Consequences in the bot:**
+- **No Toss stop orders,** above all in the pre-market and after-hours.
+- **The pre-market dip has no stop.** It buys these spikes with limit orders.
+- **Breakout entries and stops need confirmation.** A single print past the level isn't enough:
+  the SIP bid/ask (fresh within 5 s) must agree, or the price must stay past the level for 3 s.
+  Unconfirmed crossings are logged as `D orb unconfirmed`.
+- **Possible future backup stop at Toss:** regular hours only (10:00–15:55), far away (about −10%),
+  only while a breakout position is open, so it fires only if the bot is down and the market
+  really falls.
+
 ## Fastest realistic path from $12.4k to $100k (`trader/research/goal.py`)
 
 **Method:** 5,000 ten-year paths per strategy, block-bootstrapped from daily returns.

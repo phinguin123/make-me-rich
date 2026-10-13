@@ -11,7 +11,7 @@ A change that passes the unit tests but trades differently (wrong side, window, 
 that blocks real trades, an exception) shows up as a parity drop, and the deploy is refused.
 
 Inside each minute the price walks open -> low -> high -> close (open -> high -> low -> close on down
-bars) in steps of ~0.25% during the minutes that matter (06:55-09:30 ET for the book, 09:59-16:00 for SOXL/SOXS), like a live
+bars) in steps of ~0.25% during the minutes that matter (04:25-09:30 ET near a name's level, 09:59-16:00 for SOXL/SOXS), like a live
 stream crossing levels; elsewhere one tick per minute. bid/ask = price -/+ 1 cent. Fills follow the
 research's rule: a buy priced at or above the ask (marketable) fills at the ask, a resting buy fills
 at its limit only when the price trades 0.3% through it (and a resting sell 0.05% through its limit).
@@ -224,7 +224,7 @@ async def replay_day(d: pd.Timestamp, m: dict, pm: dict, daily: dict, tmp: Path)
                 continue
             nm = sleeve.pre.names.get(sym)
             near = nm is not None and (nm.active() or (nm.st.level > 0 and l <= nm.st.level * 1.01))  # only where levels matter
-            fine = (175 <= k < 330 and near) or (359 <= k <= 720 and sym in ("SOXL", "SOXS"))
+            fine = (25 <= k < 330 and near) or (359 <= k <= 720 and sym in ("SOXL", "SOXS"))
             up = c >= o
             pts[sym] = path((o, l, h, c) if up else (o, h, l, c)) if fine and np.isfinite(o) else [c]
         steps = max((len(p) for p in pts.values()), default=1)

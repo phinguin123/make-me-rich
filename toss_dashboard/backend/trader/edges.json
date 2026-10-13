@@ -16,12 +16,12 @@
     "scalp-pre": {
       "label": "Pre-market dip book (14 names, 3 slots, QQQ filter)",
       "source": "research/pre_slots.py pessimistic",
-      "mean": 0.00661,
-      "std": 0.01868,
-      "n": 521,
-      "per_year": 101.1,
-      "dd_reduce": -0.2078,
-      "dd_off": -0.3117,
+      "mean": 0.00754,
+      "std": 0.01861,
+      "n": 614,
+      "per_year": 119.0,
+      "dd_reduce": -0.2049,
+      "dd_off": -0.3013,
       "period": "2021-08 .. 2026-10",
       "slip_model": 0.0
     }

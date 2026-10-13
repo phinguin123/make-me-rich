@@ -3,7 +3,7 @@
 AAPL, AMZN, TSLL, NVDL; index ETFs like TQQQ don't work: futures keep them at fair value).
 
 Validated in trader/research/scalp_ext.py, pre_multi.py, pre_slots.py (2021-2026 SIP 1-minute bars, Toss costs):
-  - between 07:00 and 09:00 ET, when a name trades `dip` below its pre-market VWAP (dip = 0.4 x its
+  - between 04:30 and 09:00 ET (17:30-22:00 KST in summer), when a name trades `dip` below its pre-market VWAP (dip = 0.4 x its
     20-day daily volatility, 1.5%-6%) and 0.3% through, buy with a limit order at that level: we provide
     liquidity to forced sellers in a thin market and never chase
   - take profit with a resting sell limit at entry + dip; otherwise sell at 09:25 ET, before the open
@@ -48,7 +48,7 @@ ACTIVE = ("entry_open", "in_trade", "exiting", "exit_pending")
 
 @dataclass
 class PreConfig:
-    start: time = time(7, 0)  # entries allowed from (ET)
+    start: time = time(4, 30)  # entries allowed from (ET): 30 min after the pre-market opens (research: 17:30 KST beat 20:00)
     cutoff: time = time(9, 0)  # no new entries after
     exit_at: time = time(9, 25)  # sell what's left before the regular open
     z: float = 0.4  # dip = z x 20-day daily volatility of SOXL

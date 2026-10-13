@@ -104,7 +104,7 @@ def test_no_entry_before_seven_when_paused_or_after_cutoff(tmp_path):
     sleeve, md, _ = make(tmp_path)
     pre = ready(sleeve, md)
     quote(md, round(pre.level * 0.995, 2))
-    tick(sleeve, at(6, 59))
+    tick(sleeve, at(4, 20))  # before 04:30 ET (30 min after the pre-market opens): no entry
     assert pre.qty == 0 and pre.status == "watching"
     sleeve.entries_blocked = lambda: True
     tick(sleeve, at(7, 40))

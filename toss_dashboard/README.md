@@ -18,7 +18,8 @@ DD, against −22% for 30/70, for only 2–6 months less time to $100k. Backtest
 the corrected ones (2021-01 to 2026-10, yearly rebalance).
 
 - **Timing (KST, US summer time):**
-  - Pre-market dip book (14 names, 3 slots, QQQ filter): buys 20:00–22:00, out by 22:25.
+  - Pre-market dip book (14 names, 3 slots, QQQ filter): watches from 17:00, buys 17:30–22:00, out by
+    22:25.
   - Breakout: 22:30–04:57, only in semis downtrends, never held overnight.
   - Swing: trades at 22:36 on rebalance days.
 - **Adding or removing money:** after you deposit or withdraw in Toss, use **Add to bot / Take
@@ -297,6 +298,23 @@ pot, QQQ filter):
 (SOXL only was 0.89). 30/70 is now the best Sharpe: +33.2%/yr, 1.58, max DD −16.6%, 1-in-20 bad
 year +1.9%. The phases stay. Edge-monitor expectation: +0.66% per trade, about 101 trades a year.
 
+**Buy window (re-tested 2026-10-13 on all 14 names).** The first SOXL-only research, before the
+VWAP bug fix, had suggested 07:00 ET. On the book (3 slots, QQQ filter), by start time:
+
+| Start | Reactive fills | Strict fills |
+|---|---|---|
+| **04:30 ET / 17:30 KST (live)** | **+38.9%/yr, Sharpe 3.76, max DD −13%** | **+29.4%, 2.93, −19%** |
+| 05:30 / 18:30 | +36.4%, 3.62 | +27.5%, 2.82 |
+| 06:00 / 19:00 | +33.9%, 3.59 | +24.1%, 2.66 |
+| 07:00 / 20:00 (before) | +29.2%, 3.33, −10% | +21.4%, 2.49, −17% |
+
+- The earlier start is better in both halves of the sample.
+- Buys after 09:00 ET (22:00–22:20 KST) lose: −0.4% to −1.1% per trade, too close to the 09:25
+  exit. That's why the cutoff stays.
+- With the earlier start: scalp at 100% is Sharpe 1.34; 30/70 is +36.6%/yr, Sharpe 1.69, max DD
+  −16.6%, still the best mix.
+- Edge-monitor expectation: +0.75% per trade, about 119 trades a year.
+
 **Tested and rejected:**
 - **News filter** (Alpaca news, 825 signals): dips with fresh news did no worse. In a QQQ uptrend,
   3+ news items averaged +0.91% per trade (84% win) against +0.64% with none.
@@ -441,7 +459,7 @@ Every order is checked; a violation is refused, logged as an error and journaled
   the SOXS hedge.
 - **Size:** one buy is at most 60% (scalp), 25% (swing) or 35% (intraday) of the bot's money.
 - **Price:** no buy limit more than 10% above the market and no sell limit more than 10% below it.
-- **Time:** scalp buys only 07:00–09:01 and 09:59–11:31 ET.
+- **Time:** scalp buys only 04:30–09:01 and 09:59–11:31 ET.
 - **Count:** at most 30 / 60 / 100 orders a day.
 - **Doubles:** no second scalp buy while one is working.
 

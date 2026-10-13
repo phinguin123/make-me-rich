@@ -10,7 +10,7 @@ an error and recorded in the journal (`X ... REJECTED guard: ...`):
   3. price      a buy limit more than 10% above the market, or a sell limit more than 10% below it, is refused
                 (absurd prices from a bug; a limit a few % past the market is normal after a spike and fills at
                 the market price anyway)
-  4. windows    scalp buys only 07:00-09:01 ET (pre-market dip) and 09:59-11:31 ET (breakout entries)
+  4. windows    scalp buys only 04:30-09:01 ET (pre-market dip) and 09:59-11:31 ET (breakout entries)
   5. counts     at most 30 scalp, 60 swing and 100 intraday orders per day
   6. doubles    no second scalp buy of the same name while one is still working, and at most 3 working scalp buys
 Sells for exits are never blocked by rules 2, 4 and 5: getting out must always be possible.
@@ -28,7 +28,7 @@ LEVERAGED = {"SOXL", "SOXS", "TQQQ", "SQQQ", "UPRO", "SPXU", "SPXL", "SPXS", "TE
              "FNGU", "FNGD", "BULZ", "BERZ", "USD", "SSG", "QLD", "QID", "SSO", "SDS"}
 MAX_SHARE = {"scalp": 0.60, "swing": 0.25, "intraday": 0.35}
 MAX_ORDERS = {"scalp": 30, "swing": 60, "intraday": 100}
-SCALP_BUY_WINDOWS = ((time(7, 0), time(9, 1)), (time(9, 59), time(11, 31)))
+SCALP_BUY_WINDOWS = ((time(4, 30), time(9, 1)), (time(9, 59), time(11, 31)))
 
 
 def sleeve_of(tag: str) -> str:
@@ -71,7 +71,7 @@ class OrderGuard:
             if sl == "scalp":
                 t = now.astimezone(ET).time()
                 if not any(a <= t < b for a, b in SCALP_BUY_WINDOWS):
-                    return f"scalp buys are only allowed 07:00-09:01 and 09:59-11:31 ET (now {t:%H:%M})"
+                    return f"scalp buys are only allowed 04:30-09:01 and 09:59-11:31 ET (now {t:%H:%M})"
                 working = [o for o in self.open_orders() if o.side == "BUY" and o.tag.startswith("scalp")]
                 if any(o.symbol == symbol for o in working):
                     return f"a scalp buy of {symbol} is already working"

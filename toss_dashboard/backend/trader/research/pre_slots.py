@@ -25,7 +25,8 @@ def qqq_up() -> pd.Series:
     return (c > c.rolling(200, min_periods=150).mean()).shift(1)
 
 
-def all_trades(mats: dict, model: str) -> pd.DataFrame:
+def all_trades(mats: dict, model: str, e0: int = 30) -> pd.DataFrame:
+    """e0 = first entry minute after 04:00 ET (30 = 04:30, the live start; 180 = 07:00, the old one)."""
     rows = []
     for sym in NAMES:
         M = mats[sym]
@@ -39,7 +40,7 @@ def all_trades(mats: dict, model: str) -> pd.DataFrame:
             first = np.flatnonzero(np.isfinite(lo[:60]))
             if not len(first):
                 continue
-            r = _dip_trade(c, lo, hi, np.nan_to_num(v), first[0], min(0.06, max(0.015, 0.4 * s)), model, detail=True)
+            r = _dip_trade(c, lo, hi, np.nan_to_num(v), first[0], min(0.06, max(0.015, 0.4 * s)), model, e0=e0, detail=True)
             if r is not None:
                 rows.append({"date": d, "sym": sym, "j": r[1], "q": r[2], "net": float(net([r[0]], "pre", limit=True)[0])})
     return pd.DataFrame(rows)

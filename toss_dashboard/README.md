@@ -352,6 +352,17 @@ VWAP bug fix, had suggested 07:00 ET. On the book (3 slots, QQQ filter), by star
   - One pocket held in both halves: an opening-range reversal (5-minute range) after a flush of 2+ dips
     below the pre-market VWAP, +1.0% to +1.5% per trade. But it's ~15 trades a year (t ≈ 1.5): too
     thin to trust. Watch list, not traded.
+- **Chart indicators** (2026-10-14, `research/indicators.py`): RSI, MACD, volume vs normal for the time of
+  day, EMA 9/21 and Bollinger bands, alone and combined. 429 strategies on 1-, 5- and 15-minute charts with
+  three kinds of exit.
+  - Only 1% are positive after costs. Before costs it's a coin flip (median +0.01% per trade).
+  - On 2026-10-13, before SOXL ran from 118 to 126, these fired on its 5-minute chart: RSI back above 30
+    (11:35), a MACD cross up after oversold with volume (11:45), and 2x volume surges (11:50–12:00).
+    Over 2021–26 the same signals averaged −0.14% to −0.53% per trade on SOXL, and −0.2% to −0.4% on
+    the 14 names.
+  - The same day, a MACD cross up at 11:10 (120.8) was followed by a drop to 118.3.
+  - The best-looking result, SOXL on 5x volume, averaged +1.33% over 49 trades. But one trade made +33%;
+    without its 3 best trades it's +0.12%.
 - **Afternoon breakouts** (2026-10-14, the price pattern news rallies leave, e.g. SOXL 117.8 to 126 on
   2026-10-13 after Michael Dell's "not a bubble" and Gemini 4 at 12:00-12:15 ET). Rule: first close above
   the 09:30-11:30 high between 11:30 and 14:30, held to 15:55. Lost −0.2% to −0.3% per trade on the 14

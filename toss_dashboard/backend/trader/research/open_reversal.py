@@ -104,7 +104,7 @@ def prepare(z: dict) -> dict:
     up = qqq_up()
     bear = soxx_bear()
     d = {
-        "O": Of, "H": H, "L": L, "C": Cf, "Lr": Lr, "Hr": Hr, "svw": svw,
+        "O": Of, "H": H, "L": L, "C": Cf, "V": np.nan_to_num(V), "Lr": Lr, "Hr": Hr, "svw": svw,
         "RL": np.minimum.accumulate(Lr, 1), "RH": np.maximum.accumulate(Hr, 1),
         "pv": z["pv"][keep], "op": Of[:, 0], "pc": z["pc"][keep], "sym": z["sym"][keep], "date": dates,
         "kk": np.clip(0.4 * z["sig"][keep], 0.015, 0.06), "sigd": z["sig"][keep],

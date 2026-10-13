@@ -263,6 +263,44 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
+## Pre-market dip beyond SOXL (`trader/research/pre_multi.py`, research only)
+
+**Setup.** The exact live rule, not re-tuned, applied to 18 liquid names, 2021–2026 SIP: the dip is
+0.4σ of the name's own volatility below the pre-market VWAP, with a 0.3% trade-through.
+
+| Name | Reactive fills | Strict fills | Halves (strict) |
+|---|---|---|---|
+| NVDL | +1.40% (t 8.6) | +1.18% (t 6.4) | +1.29% / +1.07% |
+| TSLL | +1.24% (t 7.3) | +0.96% (t 4.9) | +0.55% / +1.35% |
+| TSLA | +0.83% (t 5.7) | +0.65% (t 3.5) | +0.21% / +1.08% |
+| MU | +0.87% (t 5.9) | +0.55% (t 2.9) | +0.12% / +0.95% |
+| SOXL | +0.78% (t 4.5) | +0.35% (t 1.6) | −0.17% / +0.86% |
+| TQQQ / SPXL / TNA / SQQQ | — | negative | — |
+
+Index leveraged ETFs don't work: they're anchored by around-the-clock futures. That's consistent
+with the edge being a dislocation in names without such an anchor.
+
+**Out of sample, 2024–2026** (selection on 2021–23 only):
+
+| Basket | Trades/yr | Avg/trade, reactive | Avg/trade, strict |
+|---|---|---|---|
+| SOXL alone | 24 | +1.09% | +0.86% |
+| All 18 names, no selection | 221 | +0.93% | +0.72% |
+
+**Regime.** The 2022 bear market lost on all 18 names: −1.43% per trade with strict fills, n = 208,
+and the strategy's own money was down 35% that year.
+
+| Strict fills, all 18 names | CAGR on its own money | Max DD | 2022 |
+|---|---|---|---|
+| No filter | +33%/yr | −47% | −35% |
+| Only when QQQ > its 200-day average (prior close) | +39%/yr | −26% | +1% |
+
+**Caveats:**
+- Most of the sample is the 2023–26 bull market.
+- Same-day results correlate (+0.6 to +0.7).
+- These figures assume the money is split evenly across the day's signals. Live code would use
+  fixed slots (signals arrive one at a time), which still has to be simulated.
+
 ## SOXL's own VWAP vs fair value from the chip stocks (`trader/research/pre_fairvalue.py`)
 
 **Why the bot uses SOXL's own pre-market price.** Within one day, SOXL is worth its previous

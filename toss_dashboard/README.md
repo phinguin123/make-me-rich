@@ -245,6 +245,31 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
+## Why swing doesn't own the 10x stocks (checked 2026-10-13)
+
+**How rare they are.** Of the 999 most-traded US stocks, Oct 2025 to Oct 2026:
+- SNDK rose 1,270%, MU 448%, AMD 219% and NVDA 29%.
+- Only 1 stock rose more than 10x, 3 more than 5x, and 46 (4.6%) doubled.
+- The median stock returned +1%. Half fell, and 8.4% lost more than half.
+
+**Why swing skipped them.** They were above the 60% volatility cap on 85–99% of days.
+
+**What happens if the cap is relaxed** (2019–2026):
+
+| Swing variant | CAGR | Max DD | Owned |
+|---|---|---|---|
+| Vol cap 60% (live) | +24.5% | −19.9% | WDC, LRCX |
+| Cap 70% / 80% / 100% | +24.0% / +25.3% / +25.7% | −22% to −25% | MU, AMD, STX, INTC (and SNDK at 100%) |
+| No cap | +2.6% | −43% | — |
+| No cap, top 5 | −3.7% | −72% | — |
+| No cap, top 3, no vol target | −33.6% | −98.6% | — |
+
+- A higher cap does buy the rockets, and it helped in 2025 (+55% vs +26%). Other years gave it
+  back (2024: +37% vs +62%), so the long-run return was about the same with deeper drops.
+- With no cap, the same momentum filter mostly buys meme and biotech spikes that collapse.
+- The 10x stocks are obvious only in hindsight. Beforehand they look like dozens of other
+  high-volatility names, and most of those crash.
+
 ## Survival-first allocation (`trader/research/allocation3.py`)
 
 **Candidates:**

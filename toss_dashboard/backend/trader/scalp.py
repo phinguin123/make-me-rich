@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 from .broker import Broker, Order
 from .config import DATA_DIR, Settings
 from .edges import EdgeMonitor
+from .journal import jr
 from .market import MarketData
 from .scalp_pre import PremarketDip
 from .toss.client import TossAPIError, TossClient
@@ -148,6 +149,7 @@ class ScalpSleeve:
             if self.st.status == "waiting" and self.edge_size("scalp-orb") <= 0:
                 self.st.status, self.st.note = "standing_aside", "switched off by the edge monitor (live results far below the backtest)"
         self.log(f"Scalp regime {self.st.regime}: SOXX {self.st.soxx_close:.2f} vs {self.cfg.regime_ma}-day avg {self.st.soxx_ma:.2f}", logging.INFO)
+        jr("D", "orb", "regime", {"soxx": self.st.soxx_close, "ma": self.st.soxx_ma, "regime": self.st.regime, "status": self.st.status})
         self.save()
 
     # ── intraday ──────────────────────────────────────────────────────────
@@ -158,6 +160,7 @@ class ScalpSleeve:
         if rng:
             self.st.or_high, self.st.or_low = rng[1], rng[2]
             self.st.status = "armed"
+            jr("D", "orb", "armed", {"hi": self.st.or_high, "lo": self.st.or_low})
             self.log(f"Scalp armed: SOXL opening range {self.st.or_low:.2f} - {self.st.or_high:.2f}", logging.INFO)
             self.save()
 
@@ -186,6 +189,7 @@ class ScalpSleeve:
                 spawn(self._enter("SOXS", None))
         elif self.st.status == "in_trade" and self.st.qty > 0:
             if (self.st.side == "SOXL" and soxl <= self.st.or_low) or (self.st.side == "SOXS" and soxl >= self.st.or_high):
+                jr("D", "orb", "stop", {"px": soxl, "side": self.st.side, "hi": self.st.or_high, "lo": self.st.or_low})
                 self.busy = True
                 spawn(self._exit("stop", claimed=True))
 
@@ -211,6 +215,7 @@ class ScalpSleeve:
                 self.st.status, self.st.note = "done", "size < 1 share or order throttle"
                 return
             self.st.status, self.st.side = "in_trade", side
+            jr("D", "orb", "trigger", {"side": side, "px": ref, "limit": limit, "qty": qty, "hi": self.st.or_high, "lo": self.st.or_low})
             self.save()
             self.log(f"Scalp BUY {side} {qty} @ <= {limit} (SOXL broke {'above' if side == 'SOXL' else 'below'} the opening range)", logging.INFO)
             order = await self.broker.submit(side, "BUY", qty, limit, "scalp-entry")

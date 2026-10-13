@@ -17,6 +17,8 @@ from .toss.client import TossAPIError, TossClient
 LOG = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 SEC_FEE = 0.0000206
+from .journal import jr
+
 DONE = {"FILLED", "CANCELED", "REJECTED", "REPLACED"}
 
 
@@ -118,10 +120,13 @@ class PaperBroker(Broker):
             if need > self._cash + 1e-6:
                 o.status, o.error = "REJECTED", "insufficient-buying-power"
                 self.orders[o.id] = o
+                jr("O", o.id, symbol, side, qty, limit, tag)
+                jr("X", o.id, "REJECTED", o.error)
                 return o
             self._cash -= need  # reserve
             o._reserved = need  # type: ignore[attr-defined]
         self.orders[o.id] = o
+        jr("O", o.id, symbol, side, qty, limit, tag)
         self.try_fill(o)
         return o
 
@@ -170,6 +175,7 @@ class PaperBroker(Broker):
         if order.done:
             return
         order.status = "CANCELED"
+        jr("X", order.id, "CANCELED", "")
         if order.side == "BUY":
             self._cash += getattr(order, "_reserved", 0.0)
         if self.on_update:
@@ -204,6 +210,9 @@ class TossBroker(Broker):
             o.id = f"rejected-{cid}"
             LOG.error("Order rejected %s %s x%s: %s", side, symbol, qty, exc)
         self.orders[o.id] = o
+        jr("O", o.id, symbol, side, qty, limit, tag)
+        if o.status == "REJECTED":
+            jr("X", o.id, "REJECTED", o.error)
         return o
 
     async def submit_amount(self, symbol: str, amount: float, tag: str) -> Order:
@@ -217,6 +226,9 @@ class TossBroker(Broker):
             o.status, o.error, o.id = "REJECTED", exc.code, f"rejected-{cid}"
             LOG.error("Amount order rejected %s $%.2f: %s", symbol, amount, exc)
         self.orders[o.id] = o
+        jr("O", o.id, symbol, "BUY", -round(amount, 2), None, tag)
+        if o.status == "REJECTED":
+            jr("X", o.id, "REJECTED", o.error)
         return o
 
     async def cancel(self, order: Order) -> None:
@@ -261,7 +273,10 @@ class TossBroker(Broker):
         comm = float(ex["commission"]) if ex.get("commission") not in (None, "") else None
         if cum > o.filled_qty and avg:
             self._apply_fill(o, cum, avg, comm)
-        o.status = snap.get("status", o.status)
+        new_status = snap.get("status", o.status)
+        if new_status in ("CANCELED", "REJECTED") and o.status != new_status:
+            jr("X", o.id, new_status, snap.get("rejectReason") or snap.get("reason") or "")
+        o.status = new_status
         if self.on_update:
             self.on_update(o)
 

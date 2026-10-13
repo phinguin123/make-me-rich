@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import time as time_module
+from pathlib import Path
 from collections import deque
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -28,6 +29,7 @@ from .allocator import Allocator
 from .alpaca import AlpacaData
 from .alpaca_stream import AlpacaStream
 from .edges import EdgeMonitor, edge_for_tag
+from .journal import J, jr, write_summary
 from .scalp import SYMBOLS as SCALP_SYMBOLS, ScalpSleeve
 from .swing import SwingSleeve
 from . import macro as macro_data
@@ -37,6 +39,14 @@ from .toss.stream import TossStream
 LOG = logging.getLogger("engine")
 ET = ZoneInfo("America/New_York")
 MACRO = ["SPY", "QQQ", "IWM", "SMH", "TLT", "UUP", "GLD", "USO", "VIXY", "IBIT", "HYG"]
+JOURNAL_SYMBOLS = {"SOXL", "SOXS", "SOXX", "QQQ"}  # minute bars + quotes recorded 04:00-20:00 ET
+
+
+def code_version() -> str:
+    try:
+        return (Path(__file__).resolve().parents[1] / "VERSION").read_text().strip()
+    except OSError:
+        return "unknown"
 MACRO_LABELS = {
     "SPY": "S&P 500", "QQQ": "Nasdaq 100 (NQ proxy)", "IWM": "Russell 2000", "SMH": "Semis",
     "TLT": "20y Treasury (yield ↑ = TLT ↓)", "UUP": "Dollar index", "GLD": "Gold", "USO": "Oil",
@@ -96,6 +106,9 @@ class Engine:
         self.day: date | None = None
         self.session: dict[str, datetime] | None = None
         self.pre_session: dict[str, datetime] | None = None
+        self._jr_minute: datetime | None = None
+        self._jr_summary_day: date | None = None
+        self._jr_last_bar: dict[str, datetime] = {}
         self._session_day: date | None = None
         self.scanned = False
         self.eod_done = False
@@ -109,6 +122,7 @@ class Engine:
     # ── helpers ───────────────────────────────────────────────────────────
     def log(self, msg: str, level: int = logging.INFO) -> None:
         LOG.log(level, msg)
+        jr("L", "E" if level >= logging.ERROR else "W" if level >= logging.WARNING else "I", msg)
         self.events.append({"ts": datetime.now(ET).strftime("%H:%M:%S"), "level": logging.getLevelName(level), "msg": msg})
 
     def _spawn(self, coro) -> None:
@@ -119,6 +133,7 @@ class Engine:
     def _task_done(self, t: asyncio.Task) -> None:
         self._tasks.discard(t)
         if not t.cancelled() and t.exception():
+            jr("E", getattr(t.get_coro(), "__qualname__", "task"), repr(t.exception()))
             self.log(f"task error: {t.exception()!r}", logging.ERROR)
 
     def unrealized(self) -> float:
@@ -171,7 +186,12 @@ class Engine:
 
     async def _reconcile_live(self) -> None:
         """Shrink/drop bot positions that no longer exist in the Toss account."""
-        if not self.s.live or not (self.positions or (self.swing and self.swing.holdings)):
+        scalp_claims = []
+        if self.scalp and self.scalp.st.qty > 0 and self.scalp.st.side:
+            scalp_claims.append(("scalp", self.scalp.st, self.scalp.st.side))
+        if self.scalp and self.scalp.pre and self.scalp.pre.st.qty > 0:
+            scalp_claims.append(("pre-market", self.scalp.pre.st, "SOXL"))
+        if not self.s.live or not (self.positions or (self.swing and self.swing.holdings) or scalp_claims):
             return
         try:
             holdings = {h["symbol"]: float(h["quantity"]) for h in (await self.toss.holdings())["items"]}
@@ -181,6 +201,15 @@ class Engine:
         if self.swing:
             intraday = {k: p.qty for k, p in self.positions.items()}
             self.swing.reconcile({k: v - intraday.get(k, 0.0) for k, v in holdings.items()})
+        free = dict(holdings)
+        for name, st, sym in scalp_claims:  # the account must really hold what the scalp sleeve thinks it holds
+            take = min(st.qty, free.get(sym, 0.0))
+            if take + 1e-9 < st.qty:
+                self.log(f"{name}: account holds {free.get(sym, 0.0):g} {sym}, sleeve expected {st.qty:g} — adjusting", logging.WARNING)
+                st.qty = take
+            free[sym] = free.get(sym, 0.0) - take
+        if scalp_claims:
+            self.scalp.save()
         for sym, pos in list(self.positions.items()):
             held = holdings.get(sym, 0.0)
             if held + 1e-9 < pos.qty:
@@ -190,14 +219,50 @@ class Engine:
                     del self.positions[sym]
         self._save()
 
+    async def _cleanup_orphans(self) -> None:
+        """Bot orders still working at Toss from a previous run (e.g. a restart mid-order) would fill without
+        this process knowing: cancel them. Orders the sleeves re-attach after a restart are kept, and
+        orders not placed by the bot (no 'tb-' client id, e.g. yours from the app) are never touched."""
+        if not self.s.live:
+            return
+        keep: set[str] = set()
+        if self.scalp and self.scalp.pre:
+            keep |= {self.scalp.pre.st.target_id, self.scalp.pre.st.entry_id} - {""}
+        if self.swing:
+            keep |= set(self.swing.pending)
+        try:
+            open_orders = await self.toss.orders("OPEN")
+        except TossAPIError as exc:
+            self.log(f"open-order check at startup failed: {exc}", logging.WARNING)
+            return
+        for o in open_orders:
+            oid, cid = o.get("orderId", ""), str(o.get("clientOrderId") or "")
+            desc = f"{o.get('side')} {o.get('symbol')} {o.get('quantity')}"
+            if oid in keep:
+                continue
+            if cid.startswith("tb-"):
+                try:
+                    await self.toss.cancel_order(oid)
+                    jr("X", oid, "CANCELED", "orphan from a previous run")
+                    self.log(f"Cancelled a bot order left working by a previous run: {desc}", logging.WARNING)
+                except TossAPIError as exc:
+                    self.log(f"Could not cancel orphan order {desc}: {exc}", logging.ERROR)
+            else:
+                self.log(f"Open order not placed by the bot, left alone: {desc}", logging.INFO)
+
     # ── lifecycle ─────────────────────────────────────────────────────────
     async def run(self) -> None:
         self.running = True
         self._stop.clear()
+        J.write_legend()
+        jr("H", code_version(), self.broker.name, {
+            "scalp": self.s.scalp_capital, "frac": self.s.scalp_position_frac, "swing": self.s.swing_capital,
+            "phases": self.s.alloc_phases, "dd_halt": self.s.account_dd_halt, "feed": self.s.alpaca_feed})
         await self.toss.open()
         self._load()
         await self._check_account()
         await self._reconcile_live()
+        await self._cleanup_orphans()
         if self.swing and self.s.live:
             await self.swing.resume(self.toss)
         self.stream.on_trade = self._on_trade
@@ -219,6 +284,7 @@ class Engine:
                 try:
                     await self._tick()
                 except Exception as exc:  # noqa: BLE001 — keep the loop alive
+                    jr("E", "tick", repr(exc))
                     self.log(f"tick error: {exc!r}", logging.ERROR)
                     await asyncio.sleep(2)
                 await asyncio.sleep(0.25)
@@ -341,6 +407,7 @@ class Engine:
             self._spawn(self._scan(today))
         if self.allocator:
             self.allocator.tick(now, open_, self._spawn)
+        self._journal_tick(now, today)
         if open_ <= now < close_:
             if open_ + timedelta(seconds=5) <= now:
                 self._cancel_server_stops_at_open()
@@ -369,6 +436,56 @@ class Engine:
                 self._spawn(self.scalp.eod())
         if isinstance(self.broker, PaperBroker):
             self.broker.on_quote()
+
+    # ── journal: market record every minute, snapshots every 5, digest after the session ──
+    def _journal_tick(self, now: datetime, today: date) -> None:
+        minute = now.replace(second=0, microsecond=0)
+        if minute == self._jr_minute or now.second < 4:
+            return
+        self._jr_minute = minute
+        if time(4, 0) <= now.time() < time(20, 0):
+            self._spawn(self._journal_minute(now))
+        if now.time() >= time(20, 5) and self._jr_summary_day != today:
+            self._jr_summary_day = today
+            self._spawn(asyncio.to_thread(write_summary, today))
+
+    async def _journal_minute(self, now: datetime) -> None:
+        syms = sorted(JOURNAL_SYMBOLS | set(self.positions))
+        if self.alpaca is not None:
+            start = now - timedelta(minutes=3)
+            try:
+                df = await self.alpaca.bars(syms, "1Min", start.isoformat(), now.isoformat(), feed="sip", adjustment="raw")
+                for row in df.itertuples(index=False):
+                    ts = row.ts.tz_convert(ET)
+                    if ts + timedelta(minutes=1) > now or ts <= self._jr_last_bar.get(row.symbol, start - timedelta(days=1)):
+                        continue
+                    self._jr_last_bar[row.symbol] = ts
+                    jr("B", ts.strftime("%H:%M"), row.symbol, row.open, row.high, row.low, row.close, row.volume,
+                       getattr(row, "vwap", None), getattr(row, "trades", None), "sip")
+            except Exception as exc:  # noqa: BLE001
+                jr("E", "journal bars", repr(exc))
+        for s in syms:
+            st = self.market.get(s)
+            if st.last or st.bid:
+                jr("N", s, st.bid or None, st.ask or None, st.last or None, "sip" if self.market.sip_fresh(s) else "toss")
+        if now.minute % 5 == 0:
+            self._journal_snapshots()
+
+    def _journal_snapshots(self) -> None:
+        if self.scalp:
+            pos = {}
+            if self.scalp.st.qty > 0:
+                pos[self.scalp.st.side] = [self.scalp.st.qty, self.scalp.st.entry]
+            if self.scalp.pre and self.scalp.pre.st.qty > 0:
+                pos["SOXL(pre)"] = [self.scalp.pre.st.qty, self.scalp.pre.st.entry]
+            jr("P", "scalp", self.scalp.cash, self.scalp.equity(), pos)
+        if self.swing:
+            jr("P", "swing", self.swing.cash, self.swing.value(),
+               {s: [q, (self.swing.cost.get(s, 0) / q) if q else 0] for s, q in self.swing.holdings.items()})
+        if self.positions:
+            jr("P", "intraday", None, self.equity(), {p.symbol: [p.qty, p.entry] for p in self.positions.values()})
+        if self.allocator:
+            jr("P", "bot", self.allocator.state.get("reserve", 0.0), self.allocator.total(), {"phase": self.allocator.state.get("phase", 0) + 1})
 
     def _ensure_prepare(self, today: date) -> asyncio.Task:
         """One shared universe-build task per day (the scheduler and the scan both wait on it)."""
@@ -673,6 +790,7 @@ class Engine:
     # ── fills ─────────────────────────────────────────────────────────────
     def _on_fill(self, order: Order, qty: float, price: float) -> None:
         st = self.market.get(order.symbol)
+        jr("F", order.id, order.symbol, order.side, qty, price, st.bid or None, st.ask or None, order.tag)
         if self.market.sip_fresh(order.symbol) and st.bid and st.ask:  # execution quality vs the NBBO
             self.edges.record_fill(edge_for_tag(order.tag), order.side, price, st.bid, st.ask)
         if order.tag.startswith("scalp"):

@@ -24,6 +24,7 @@ from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Callable
 
 from .broker import Order
+from .journal import jr
 from .toss.client import TossAPIError
 
 if TYPE_CHECKING:
@@ -188,8 +189,10 @@ class PremarketDip:
         self.st.dip = min(self.cfg.max_dip, max(self.cfg.min_dip, self.cfg.z * self.st.sigma))
         if self.sl.edge_size("scalp-pre") <= 0:
             self.st.status, self.st.note = "standing_aside", "switched off by the edge monitor (live results far below the backtest)"
+            jr("D", "pre", "prepare", {"sigma": self.st.sigma, "dip": self.st.dip, "status": self.st.status})
             return
-        self.st.status = "watching"
+        self.st.status, self.st.note = "watching", ""
+        jr("D", "pre", "prepare", {"sigma": self.st.sigma, "dip": self.st.dip, "status": "watching"})
         self._log(f"watching for SOXL {self.st.dip:.2%} below the pre-market VWAP, 07:00-09:00 ET "
                   f"(20-day vol {self.st.sigma:.1%})")
 
@@ -240,6 +243,8 @@ class PremarketDip:
         if vol > 0:
             self.st.vwap = pv / vol
             self.st.level = math.floor(self.st.vwap * (1 - self.st.dip) * 100) / 100 if self.st.dip else 0.0
+            jr("D", "pre", "vwap", {"vwap": self.st.vwap, "level": self.st.level, "last": self.sl.market.get(self.SYMBOL).last,
+                                    "bars": len(self.bars), "src": self.st.source})
 
     # ── trading ───────────────────────────────────────────────────────────
     async def _enter(self, today: date) -> None:
@@ -252,6 +257,8 @@ class PremarketDip:
             return
         self.st.attempts += 1
         self.st.status = "entry_open"
+        jr("D", "pre", "trigger", {"level": level, "last": sl.market.get(self.SYMBOL).last, "vwap": self.st.vwap, "qty": qty,
+                                   "attempt": self.st.attempts})
         self._log(f"BUY SOXL {qty} @ {level} limit (dip {self.st.dip:.2%} below VWAP {self.st.vwap:.2f})")
         order = await sl.broker.submit(self.SYMBOL, "BUY", qty, level, "scalp-pre-entry")
         self.st.entry_id, self.st.entry_qty = order.id, qty
@@ -283,6 +290,7 @@ class PremarketDip:
         if not self.sl.allow_order(True):
             self.st.note = "target not placed (order throttle); selling at 09:25"
             return
+        jr("D", "pre", "target", {"entry": self.st.entry, "target": self.st.target, "qty": self.st.qty})
         order = await self.sl.broker.submit(self.SYMBOL, "SELL", self.st.qty, self.st.target, "scalp-pre-target")
         if order.status == "REJECTED":
             self.st.note = f"target rejected ({order.error}); selling at 09:25"
@@ -293,6 +301,7 @@ class PremarketDip:
     async def _exit(self, reason: str, market: bool = False) -> None:
         sl = self.sl
         self.st.status = "exiting"
+        jr("D", "pre", "exit", {"reason": reason, "qty": self.st.qty, "market": market})
         if self.target_order and not self.target_order.done:
             await sl.broker.cancel(self.target_order)
             await sl._wait(self.target_order, 3)

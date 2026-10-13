@@ -37,6 +37,8 @@ from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from .journal import jr
+
 ET = ZoneInfo("America/New_York")
 
 
@@ -81,6 +83,7 @@ class Allocator:
         if reached > int(self.state.get("phase", 0)):  # one-way: only towards safer phases
             self.state["phase"] = reached
             self.targets = self._phase_targets(reached)
+            jr("D", "alloc", "phase", {"phase": reached + 1, "total": total})
             self.log(f"Glide path: bot money ${total:,.0f} reached ${self.phases[reached][0]:,.0f} -> phase {reached + 1}: "
                      f"scalp {self.targets['scalp']:.0%} / swing {self.targets['swing']:.0%}", logging.WARNING)
             self.save()
@@ -143,6 +146,7 @@ class Allocator:
         if hwm and total < hwm * (1 - self.halt_dd):
             self.state["breached"] = True
             self.save()
+            jr("D", "alloc", "breaker", {"total": total, "hwm": hwm, "dd": total / hwm - 1})
             msg = (f"Account drawdown breaker: bot money ${total:,.0f} is {total / hwm - 1:.1%} below its high of ${hwm:,.0f} "
                    f"(limit {self.halt_dd:.0%}). New entries paused; exits still run. Review, then press Resume.")
             self.log(msg, logging.ERROR)
@@ -211,6 +215,7 @@ class Allocator:
             msg = (f"{reason}: waiting, the bot owns ${total:,.0f} but only ${ceiling or 0:,.0f} is free in the account "
                    "(money in use outside the bot)")
             if self.note != msg:
+                jr("D", "alloc", "wait", {"reason": reason, "owned": total, "free": ceiling})
                 self.log(f"Allocator {msg}", logging.WARNING)
             self.note = msg
             self._retry_at = now + timedelta(minutes=5)
@@ -236,6 +241,7 @@ class Allocator:
             self.state["hwm"] = max(0.0, float(self.state.get("hwm", 0.0)) + pending)
         self.state["hwm"] = max(float(self.state.get("hwm", 0.0)), total)
         self.state.setdefault("history", []).append(entry)
+        jr("D", "alloc", "run", {k: v for k, v in entry.items() if k != "date"})
         self.save()
         self.note = ""
         self.log(f"Allocator ({reason}): ${total:,.2f} -> scalp ${tgt_scalp:,.2f} ({self.targets.get('scalp', 0):.0%}) / "

@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from .journal import jr
+
 ET = ZoneInfo("America/New_York")
 EXPECTATIONS = Path(__file__).with_name("edges.json")
 SIZE = {"healthy": 1.0, "reduced": 0.5, "off": 0.0}
@@ -140,6 +142,7 @@ class EdgeMonitor:
     def _set(self, name: str, status: str, reason: str) -> None:
         e = self.edges[name]
         if e["status"] != status:
+            jr("D", "edge", "status", {"edge": name, "from": e["status"], "to": status, "reason": reason})
             level = logging.WARNING if status != "healthy" else logging.INFO
             self.log(f"Edge monitor: {name} {e['status']} -> {status} ({reason}); size x{SIZE[status]:g}", level)
             e["changed"] = datetime.now(ET).isoformat(timespec="seconds")

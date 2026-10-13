@@ -33,3 +33,4 @@ broker_0f_*.jsonl
 
 # Toss trader runtime data: token cache, state, logs, research data
 toss_dashboard/backend/data/
+toss_dashboard/backend/VERSION

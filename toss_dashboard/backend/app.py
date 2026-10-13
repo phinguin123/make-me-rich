@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -15,11 +16,14 @@ from pathlib import Path
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from trader.config import DATA_DIR, SETTINGS
-from trader.engine import Engine
+from trader.engine import Engine, code_version
+from trader.journal import jr
+
+LOG = logging.getLogger("host")
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 TOKEN = os.getenv("TRADER_DASHBOARD_TOKEN", "").strip()
@@ -46,18 +50,38 @@ def setup_logging() -> None:
 
 
 class Host:
+    """Runs the engine and restarts it if it ever stops on its own (crash), at most 5 times an hour."""
+
     engine: Engine | None = None
     task: asyncio.Task | None = None
+    stopping = False
+    restarts: list[float] = []
 
     def running(self) -> bool:
         return self.task is not None and not self.task.done()
 
     def start(self) -> None:
         if not self.running():
+            self.stopping = False
             self.engine = Engine(SETTINGS)
             self.task = asyncio.create_task(self.engine.run())
+            self.task.add_done_callback(self._ended)
+
+    def _ended(self, t: asyncio.Task) -> None:
+        if self.stopping:
+            return
+        exc = None if t.cancelled() else t.exception()
+        jr("E", "engine", repr(exc))
+        now = time.monotonic()
+        self.restarts = [x for x in self.restarts if now - x < 3600] + [now]
+        if len(self.restarts) > 5:
+            LOG.error("Engine stopped unexpectedly (%r) for the 6th time in an hour; not restarting", exc)
+            return
+        LOG.error("Engine stopped unexpectedly (%r); restarting in 30 s", exc)
+        asyncio.get_running_loop().call_later(30, self.start)
 
     async def stop(self) -> None:
+        self.stopping = True
         if self.engine and self.running():
             await self.engine.stop()
             await asyncio.wait_for(self.task, timeout=30)
@@ -90,7 +114,8 @@ def status() -> dict:
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "running": host.running()}
+    ok = host.running() or host.stopping  # 503 = the engine died (the deploy script rolls back on that)
+    return JSONResponse({"ok": ok, "running": host.running(), "version": code_version()}, status_code=200 if ok else 503)
 
 
 @app.get("/api/status", dependencies=[api])

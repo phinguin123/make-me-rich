@@ -29,6 +29,7 @@ import pandas as pd
 from .alpaca import AlpacaData
 from .broker import Broker, Order
 from .config import DATA_DIR, Settings
+from .journal import jr
 from .research.portfolio import PP, backtest, build
 
 LOG = logging.getLogger("swing")
@@ -222,6 +223,8 @@ class SwingSleeve:
             "model_drawdown": float(eq.iloc[-1] / eq.cummax().iloc[-1] - 1),
         }
         self.save()
+        jr("D", "swing", "model", {"as_of": self.model["as_of"], "exposure": self.model["exposure"], "n": len(weights),
+                                   "rebalance_day": self.model["rebalance_day"], "weights": weights})
         self.log(f"Swing model ({self.model['as_of']}): {len(weights)} names, exposure {self.model['exposure']:.0%}"
                  f"{', SOXS hedge ON' if self.model['hedge_on'] else ''}; rebalance day: {self.model['rebalance_day']}", logging.INFO)
 
@@ -258,6 +261,7 @@ class SwingSleeve:
             if sells:
                 await asyncio.sleep(5)
                 await self.broker.sync()
+            jr("D", "swing", "plan", {"total": total, "band": band, "sells": {s: q for s, q in sells}, "buys": {s: a for s, a in buys}})
             if buys and not buys_allowed():
                 self.log(f"Swing: {len(buys)} buys skipped (new entries paused)", logging.WARNING)
                 buys = []

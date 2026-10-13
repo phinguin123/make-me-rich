@@ -9,9 +9,13 @@ The bot's money moves to a safer mix as it grows, one way only (`TRADER_ALLOC_PH
 
 | Phase | Bot money | Scalp (SOXL/SOXS, intraday) | Swing (momentum) | Cash reserve | Backtest |
 |---|---|---|---|---|---|
-| **1. Growth (now)** | under $50k | 50% | 50% | — | +29.4%/yr, max DD −29%, bad year −5.8% (corrected, see below) |
-| 2. Build | $50k–$100k | 30% | 70% | — | +28.5%/yr, max DD −17% |
-| 3. Keep | over $100k | 20% | 50% | 30% | +20.0%/yr, max DD −12% |
+| **1. Growth (now)** | under $50k | 30% | 70% | — | +27.6%/yr, max DD −22%, bad year −2.1% |
+| 2. Build | $50k–$100k | 25% | 75% | — | +27.1%/yr, max DD −21% |
+| 3. Keep | over $100k | 20% | 50% | 30% | about +20%/yr, max DD about −13% |
+
+Phase 1 was 50/50 until the research fix of 2026-10-13. The corrected data gave 50/50 a −29% max
+DD, against −22% for 30/70, for only 2–6 months less time to $100k. Backtest figures above are
+the corrected ones (2021-01 to 2026-10, yearly rebalance).
 
 - **Timing (KST, US summer time):**
   - Pre-market dip: buys 20:00–22:00, out by 22:25.

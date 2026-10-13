@@ -1,6 +1,6 @@
-"""Alpaca market-data client (free plan): SIP history, IEX realtime, crypto.
+"""Alpaca market-data client: SIP bars (history and real time with Algo Trader Plus), quotes, crypto.
 
-Only used for data. Orders always go through Toss.
+Only used for data. Orders always go through Toss. Real-time streaming is in alpaca_stream.py.
 """
 from __future__ import annotations
 
@@ -39,7 +39,8 @@ class AsyncRateLimiter:
 
 
 class AlpacaData:
-    def __init__(self, per_minute: int = 190):
+    def __init__(self, per_minute: int | None = None):
+        per_minute = per_minute or (9000 if SETTINGS.alpaca_feed == "sip" else 190)  # plan limits 10,000 / 200
         self.headers = {
             "APCA-API-KEY-ID": SETTINGS.alpaca_key,
             "APCA-API-SECRET-KEY": SETTINGS.alpaca_secret,
@@ -47,13 +48,21 @@ class AlpacaData:
         self.limiter = AsyncRateLimiter(per_minute)
         self._session: aiohttp.ClientSession | None = None
 
-    async def __aenter__(self) -> "AlpacaData":
-        self._session = aiohttp.ClientSession(headers=self.headers, timeout=aiohttp.ClientTimeout(total=60))
+    async def open(self) -> "AlpacaData":
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(headers=self.headers, timeout=aiohttp.ClientTimeout(total=60))
         return self
 
-    async def __aexit__(self, *exc) -> None:
+    async def close(self) -> None:
         if self._session:
             await self._session.close()
+            self._session = None
+
+    async def __aenter__(self) -> "AlpacaData":
+        return await self.open()
+
+    async def __aexit__(self, *exc) -> None:
+        await self.close()
 
     async def _get(self, url: str, params: dict) -> dict:
         assert self._session is not None
@@ -122,3 +131,6 @@ class AlpacaData:
 
     async def snapshots(self, symbols: Iterable[str], feed: str = "iex") -> dict:
         return await self._get(f"{DATA_URL}/v2/stocks/snapshots", {"symbols": ",".join(symbols), "feed": feed})
+
+    async def latest_quotes(self, symbols: Iterable[str], feed: str = "sip") -> dict:
+        return (await self._get(f"{DATA_URL}/v2/stocks/quotes/latest", {"symbols": ",".join(symbols), "feed": feed})).get("quotes", {})

@@ -162,6 +162,12 @@ export default function App() {
             <span className={`h-2 w-2 rounded-full ${s.connected ? "bg-emerald-400" : "bg-zinc-600"}`} />
             toss stream
           </span>
+          {s.feeds?.sip && (
+            <span className="flex items-center gap-1.5" title={s.feeds.sip.error || `${s.feeds.sip.messages} messages · bars from ${s.feeds.bars}`}>
+              <span className={`h-2 w-2 rounded-full ${s.feeds.sip.connected ? "bg-emerald-400" : s.feeds.sip.error ? "bg-red-500" : "bg-zinc-600"}`} />
+              SIP stream
+            </span>
+          )}
           <span>{s.now_et ?? "—"} ET</span>
           <span className="text-zinc-600">|</span>
           <span>{session}</span>

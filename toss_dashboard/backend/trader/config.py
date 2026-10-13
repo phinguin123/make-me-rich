@@ -41,6 +41,8 @@ class Settings:
     toss_account_seq: str = field(default_factory=lambda: _env("TOSS_ACCOUNT_SEQ", "1").split()[0])
     alpaca_key: str = field(default_factory=lambda: _env("ALPACA_API_KEY"))
     alpaca_secret: str = field(default_factory=lambda: _env("ALPACA_API_SECRET"))
+    # Alpaca data plan: "sip" (Algo Trader Plus: real-time full market + stream), "iex" (free), "off"
+    alpaca_feed: str = field(default_factory=lambda: _env("TRADER_ALPACA_FEED", "sip").lower())
 
     # "paper" simulates fills locally on live Toss data; "live" sends real orders.
     mode: str = field(default_factory=lambda: _env("TRADER_MODE", "paper").lower())

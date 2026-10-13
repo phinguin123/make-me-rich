@@ -1,8 +1,9 @@
 """Live per-symbol market state.
 
-Prices come from the Toss WebSocket (sampled trade + top-of-book frames). Minute
-bars with volume come from polling Toss 1-minute candles, which are complete,
-unlike the sampled WebSocket tape.
+With Alpaca Algo Trader Plus, prices come from the full-market SIP stream (every trade,
+consolidated NBBO) and minute bars from Alpaca's SIP bars: the same data the research used.
+Toss is the fallback: its sampled WebSocket frames and 1-minute candles are used for any
+symbol without fresh SIP data (and for everything when Alpaca is off).
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ class SymbolState:
     bid_size: float = 0.0
     ask_size: float = 0.0
     bars: dict[datetime, Bar] = field(default_factory=dict)  # today's regular-session bars by end time
+    sip_ts: datetime | None = None  # local time of the last SIP trade/quote (None: Toss-only symbol)
 
     @property
     def mid(self) -> float:
@@ -82,32 +84,74 @@ class SymbolState:
         return bars[0].open if bars else self.last
 
 
+SIP_FRESH = 15.0  # seconds: Toss frames are ignored for a symbol with SIP data this recent
+
+
 class MarketData:
-    def __init__(self, client: TossClient):
+    def __init__(self, client: TossClient, alpaca=None):
         self.client = client
+        self.alpaca = alpaca  # AlpacaData with an open session (SIP bars), or None
         self.symbols: dict[str, SymbolState] = {}
         self.bar_symbols: set[str] = set()
+        self.bar_source = "toss"
 
     def get(self, symbol: str) -> SymbolState:
         if symbol not in self.symbols:
             self.symbols[symbol] = SymbolState(symbol)
         return self.symbols[symbol]
 
-    # WebSocket callbacks
-    def on_trade(self, symbol: str, price: float, volume: float, ts: datetime) -> None:
+    def sip_fresh(self, symbol: str) -> bool:
+        s = self.symbols.get(symbol)
+        return bool(s and s.sip_ts and (datetime.now(ET) - s.sip_ts).total_seconds() < SIP_FRESH)
+
+    # WebSocket callbacks (src: "toss" sampled frames, "sip" Alpaca full tape)
+    def on_trade(self, symbol: str, price: float, volume: float, ts: datetime, src: str = "toss") -> None:
         s = self.get(symbol)
+        if src == "sip":
+            s.sip_ts = datetime.now(ET)
+        elif self.sip_fresh(symbol):
+            return
         s.last, s.last_ts = price, ts
 
-    def on_book(self, symbol: str, bid: float, bid_sz: float, ask: float, ask_sz: float, ts: datetime) -> None:
+    def on_book(self, symbol: str, bid: float, bid_sz: float, ask: float, ask_sz: float, ts: datetime, src: str = "toss") -> None:
         s = self.get(symbol)
+        if src == "sip":
+            s.sip_ts = datetime.now(ET)
+        elif self.sip_fresh(symbol):
+            return
         s.bid, s.bid_size, s.ask, s.ask_size = bid, bid_sz, ask, ask_sz
         if not s.last:
             s.last = (bid + ask) / 2
 
-    async def refresh_bars(self, symbols: set[str] | None = None) -> None:
-        """Pull today's 1-minute candles (regular session) for the tracked symbols."""
-        targets = symbols if symbols is not None else self.bar_symbols
+    async def refresh_bars(self, symbols: set[str] | None = None, now: datetime | None = None) -> None:
+        """Today's completed 1-minute bars (regular session): Alpaca SIP, else Toss candles."""
+        targets = set(symbols if symbols is not None else self.bar_symbols)
+        if not targets:
+            return
+        if self.alpaca is not None:
+            try:
+                await self._refresh_sip(targets, now or datetime.now(ET))
+                self.bar_source = "sip"
+                return
+            except Exception as exc:  # noqa: BLE001 — fall back to Toss for this minute
+                LOG.warning("SIP bars failed (%s); using Toss candles", exc)
+        self.bar_source = "toss"
         await asyncio.gather(*(self._refresh_one(s) for s in targets))
+
+    async def _refresh_sip(self, targets: set[str], now_et: datetime) -> None:
+        open_dt = datetime.combine(now_et.date(), OPEN, ET)
+        lasts = [max(self.get(s).bars) if self.get(s).bars else open_dt for s in targets]
+        start = max(open_dt, min(lasts) - timedelta(minutes=4))  # re-read a few bars: late prints update them
+        df = await self.alpaca.bars(sorted(targets), "1Min", start.isoformat(), now_et.isoformat(), feed="sip", adjustment="raw")
+        for row in df.itertuples(index=False):
+            end = row.ts.tz_convert(ET).to_pydatetime() + timedelta(minutes=1)
+            if end.date() != now_et.date() or not (time(9, 31) <= end.time() <= time(16, 0)) or end > now_et:
+                continue
+            self.get(row.symbol).bars[end] = Bar(end, float(row.open), float(row.high), float(row.low), float(row.close), float(row.volume))
+        for s in targets:
+            st = self.get(s)
+            if st.bars and not st.last:
+                st.last = st.bars[max(st.bars)].close
 
     async def _refresh_one(self, symbol: str) -> None:
         try:

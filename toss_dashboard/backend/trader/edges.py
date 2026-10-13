@@ -30,6 +30,14 @@ EXPECTATIONS = Path(__file__).with_name("edges.json")
 SIZE = {"healthy": 1.0, "reduced": 0.5, "off": 0.0}
 
 
+def edge_for_tag(tag: str) -> str:
+    if tag.startswith("scalp-pre"):
+        return "scalp-pre"
+    if tag.startswith("scalp"):
+        return "scalp-orb"
+    return "swing" if tag.startswith("swing") else "intraday-orb"
+
+
 def load_expectations(path: Path = EXPECTATIONS) -> dict[str, dict]:
     return json.loads(path.read_text())["edges"] if path.exists() else {}
 
@@ -58,6 +66,30 @@ class EdgeMonitor:
         e["trades"].append({"ts": datetime.now(ET).isoformat(timespec="seconds"), "ret": round(ret, 6), "pnl": round(pnl, 2), **info})
         self._evaluate(name)
         self.save()
+
+    def record_fill(self, name: str, side: str, price: float, bid: float, ask: float) -> None:
+        """Execution quality: what a fill paid versus the NBBO mid at the time (positive = cost)."""
+        mid = (bid + ask) / 2
+        if mid <= 0:
+            return
+        e = self._edge(name)
+        cost = (price / mid - 1) * (1 if side == "BUY" else -1)
+        fills = e.setdefault("fills", [])
+        fills.append({"ts": datetime.now(ET).isoformat(timespec="seconds"), "side": side, "cost": round(cost, 6),
+                      "half_spread": round((ask - bid) / 2 / mid, 6)})
+        del fills[:-300]
+        f = self.fill_stats(name)
+        model = self.exp.get(name, {}).get("slip_model")
+        if model is not None and f["n"] >= 10 and f["cost"] > model + 0.001 and not e.get("cost_warned"):
+            e["cost_warned"] = True
+            self.log(f"Edge monitor: {name} fills cost {f['cost']:.2%}/side vs the {model:.2%} the backtest assumed", logging.WARNING)
+        self.save()
+
+    def fill_stats(self, name: str) -> dict:
+        fills = self.edges.get(name, {}).get("fills", [])
+        n = len(fills)
+        return {"n": n, "cost": sum(f["cost"] for f in fills) / n if n else 0.0,
+                "half_spread": sum(f["half_spread"] for f in fills) / n if n else 0.0}
 
     def reenable(self, name: str) -> None:
         """Manual reset after an edge was switched off: judge it again from the next trade."""
@@ -119,5 +151,5 @@ class EdgeMonitor:
             exp, e = self.exp.get(name, {}), self.edges.get(name, {})
             out.append({"name": name, "label": exp.get("label", name), "status": e.get("status", "healthy"),
                         "size": self.multiplier(name), "reason": e.get("reason", ""), "changed": e.get("changed", ""),
-                        "live": self.stats(name), "backtest": exp})
+                        "live": self.stats(name), "fills": self.fill_stats(name), "backtest": exp})
         return out

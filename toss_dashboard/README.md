@@ -118,19 +118,33 @@ What the research found:
   semiconductors**: they are currently too volatile for the strategy's risk cap. That
   is the model's own answer to the overheated-semis risk.
 
-**Data sources:** all free.
-- Alpaca: daily and minute bars, IEX real-time.
+**Data sources:**
+- Alpaca Algo Trader Plus (subscribed, `TRADER_ALPACA_FEED=sip`): real-time full-market (SIP)
+  trades, quotes and minute bars, plus history. Also available: Blue Ocean (day market),
+  options (OPRA) and news.
 - FRED: Treasury yields, credit spreads, dollar index.
 - Yahoo: ES/NQ/ZN/CL/GC futures, VIX/VIX3M/MOVE, SOX.
-- Toss: real-time quotes and orders.
+- Toss: orders and your order events, plus fallback quotes.
 
-No paid service is required. Unusual Whales-style options flow and "put walls" don't fit a
-monthly strategy and have no robust systematic evidence, so they're not used. Optional
-upgrades:
-- **Alpaca SIP real-time ($99/mo):** improves the intraday scanner (its free IEX feed
-  matches the full-market ranking only 51% of the time).
-- **Databento CME live (~$33/mo + exchange fees):** needed only for real-time futures
-  trading, which this bot doesn't do.
+Unusual Whales-style options flow and "put walls" don't fit a monthly strategy and have no
+robust systematic evidence, so they're not used. Databento CME live (~$33/mo + exchange
+fees) would be needed only for real-time futures trading, which this bot doesn't do.
+
+### Live data path (Alpaca SIP)
+
+The research used SIP data, and now the live signals do too:
+
+| Piece | Source |
+|---|---|
+| Last price and bid/ask | SIP stream: every trade and the consolidated NBBO. Toss's frames are sampled about once a second; they're now used only for a symbol whose SIP data is older than 15 s. |
+| Minute bars (opening range, VWAP) | SIP bars via REST each minute, restart-safe. Falls back to Toss candles. |
+| Pre-market dip VWAP | SIP bars since 04:00 ET, the data the edge was found on. Falls back to Toss candles. |
+| Stocks-in-play scanner | SIP opening volume against SIP baselines, as in the backtest. The free IEX feed matched the full-market ranking only 51% of the time. |
+| Execution quality | Each Toss fill is compared with the SIP NBBO mid at that moment. The Edge health panel shows the cost per side against the slippage the backtest assumed, and warns after 10+ fills if it's 0.1% worse. |
+
+Alpaca allows one stream connection per account. Run the engine in one place only, and don't
+open another stream (from research scripts, say) while it runs; REST calls are fine. With
+`TRADER_ALPACA_FEED=iex` or `off`, everything falls back to the Toss-only path.
 
 ## SOXL/SOXS scalp sleeve (`TRADER_SCALP_CAPITAL`, off by default)
 
@@ -199,7 +213,11 @@ value, and the open's liquidity pulls it back. A resting limit order is paid for
 liquidity. Outside regular hours, prints can trade below our price on another venue without
 filling us, so expect the lower number.
 
-**The day market is not traded.** Ten hypothesis families failed after costs. The venue is a single
+**The day market is not traded.** Ten hypothesis families failed after costs.
+Blue Ocean quotes from Alpaca (`trader/research/boats.py`, 14,000 samples over 289 sessions)
+show the real cost is lower than assumed: SOXL's median half-spread is 0.031% and SOXS's
+0.086% (I had assumed 0.10%). At those costs, the best idea (Korean semis leading SOXL)
+nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
 ## Leveraged-ETF trend rules (research only, `trader/research/lev_trend.py`)
@@ -370,10 +388,9 @@ What the research found:
   - HYG, SMH and QQQ's first 30 minutes weakly predict QQQ's rest of day (t ≈ 2.5–2.8).
   - TLT, UUP, GLD and USO carry no intraday signal.
   - VIXY down > 1% in the first 30 minutes was followed by QQQ +0.28% on average.
-- **Scanner data gap.** The live scanner uses Alpaca's free IEX feed. Its top 20
-  overlaps the full-market (SIP) top 20 51% of the time on average (25 sampled days,
-  rank correlation 0.52). The strategy still works on the top 10 or top 20, but the
-  biggest gap between backtest and live is here. Alpaca's SIP feed ($99/mo) would close it.
+- **Scanner data gap (closed).** The free IEX feed's top 20 overlapped the full-market (SIP)
+  top 20 only 51% of the time (25 sampled days, rank correlation 0.52). With Algo Trader
+  Plus, the live scanner ranks on SIP like the backtest.
 
 ## Costs and taxes
 
@@ -548,7 +565,10 @@ backend/
     config.py            settings from the repo-root .env
     toss/client.py       Toss Open API (REST)
     toss/stream.py       Toss WebSocket: trades, top-of-book, your order events
-    alpaca.py            Alpaca free data: SIP history, IEX realtime
+    alpaca.py            Alpaca data (REST): SIP bars, quotes, snapshots
+    alpaca_stream.py     Alpaca SIP WebSocket: every trade + NBBO
+    edges.py / edges.json  edge health monitor + backtest expectations
+    scalp.py / scalp_pre.py  SOXL/SOXS sleeve: regular-session breakout / pre-market dip
     scanner.py           stocks-in-play scanner
     market.py            live quotes, minute bars, VWAP, opening range
     strategy.py          intraday strategy rules + validated defaults

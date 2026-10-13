@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 
 import websockets
 
@@ -55,11 +56,16 @@ async def main() -> None:
                 ok("keepalive answered") if "pong" in await asyncio.wait_for(_skip_data(ws), 10) else bad("no pong")
         except Exception as exc:  # noqa: BLE001
             bad(f"websocket: {exc}")
-    print("Alpaca data")
+    print(f"Alpaca data (TRADER_ALPACA_FEED={SETTINGS.alpaca_feed})")
     try:
         async with AlpacaData() as api:
-            snap = await api.snapshots(["SPY"])
-            ok(f"IEX realtime SPY {snap['SPY']['latestTrade']['p']}")
+            feed = "sip" if SETTINGS.alpaca_feed == "sip" else "iex"
+            snap = await api.snapshots(["SPY"], feed=feed)
+            ok(f"{feed.upper()} realtime SPY {snap['SPY']['latestTrade']['p']}")
+            if feed == "sip":  # the free plan refuses SIP data newer than 15 minutes
+                now = datetime.now(timezone.utc)
+                await api.bars(["SPY"], "1Min", (now - timedelta(minutes=10)).isoformat(), now.isoformat(), feed="sip")
+                ok("recent SIP bars allowed (Algo Trader Plus)")
     except Exception as exc:  # noqa: BLE001
         bad(f"alpaca: {exc}")
 

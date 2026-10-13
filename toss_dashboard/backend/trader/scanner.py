@@ -4,9 +4,9 @@ Selection mirrors the backtest: liquid common stocks (prev close > $5, 14-day AD
 >= 1M shares, ATR14 >= $0.50, no funds/leveraged products) ranked by the relative
 volume of the first 5-minute bar versus its own 14-session average.
 
-Opening volume comes from Alpaca's free real-time IEX feed, compared against an
-IEX baseline so the ratio is like-for-like. If Alpaca is unavailable, Toss's
-realtime rankings provide the candidate pool instead.
+Opening volume comes from Alpaca: the full-market SIP feed with Algo Trader Plus (as in
+the backtest), or the free IEX feed. The baseline uses the same feed so the ratio is
+like-for-like. If Alpaca is unavailable, Toss's realtime rankings provide the pool.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .alpaca import AlpacaData
-from .config import DATA_DIR
+from .config import DATA_DIR, SETTINGS
 from .toss.client import TossAPIError, TossClient
 
 LOG = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ FUND_RE = re.compile(
     re.IGNORECASE,
 )
 STOCK_TYPES = {"STOCK", "FOREIGN_STOCK", "DEPOSITARY_RECEIPT"}
+FEED = "sip" if SETTINGS.alpaca_feed == "sip" else "iex"
 
 
 @dataclass
@@ -65,7 +66,7 @@ class Scanner:
     async def prepare(self, day: date) -> None:
         """Daily stats + IEX opening-volume baselines. Run before the open."""
         LIVE_DIR.mkdir(parents=True, exist_ok=True)
-        cache = LIVE_DIR / f"universe_{day.isoformat()}.parquet"
+        cache = LIVE_DIR / f"universe_{day.isoformat()}_{FEED}.parquet"
         if cache.exists():
             self.universe = pd.read_parquet(cache)
             self.prepared_for = day
@@ -91,7 +92,7 @@ class Scanner:
             syms = list(uni.index)
             for d in sessions:
                 for i in range(0, len(syms), 700):
-                    b = await api.bars(syms[i : i + 700], "5Min", et_iso(d, 9, 30), et_iso(d, 9, 34), feed="iex")
+                    b = await api.bars(syms[i : i + 700], "5Min", et_iso(d, 9, 30), et_iso(d, 9, 34), feed=FEED)
                     base.append(b[["symbol", "volume"]])
             if base:
                 b = pd.concat(base)
@@ -101,14 +102,14 @@ class Scanner:
         uni.to_parquet(cache)
         self.universe = uni
         self.prepared_for = day
-        LOG.info("Universe prepared: %d liquid stocks with IEX baselines", len(uni))
+        LOG.info("Universe prepared: %d liquid stocks with %s baselines", len(uni), FEED.upper())
 
     async def scan(self, day: date) -> list[Candidate]:
         cands: list[Candidate] = []
         try:
             cands = await self._scan_iex(day)
         except Exception as exc:  # noqa: BLE001
-            LOG.error("IEX scan failed (%s); falling back to Toss rankings", exc)
+            LOG.error("%s scan failed (%s); falling back to Toss rankings", FEED.upper(), exc)
         if not cands:
             cands = await self._scan_toss()
         cands = await self._verify_with_toss(cands)
@@ -126,7 +127,7 @@ class Scanner:
         frames = []
         async with AlpacaData() as api:
             for i in range(0, len(syms), 700):
-                frames.append(await api.bars(syms[i : i + 700], "5Min", et_iso(day, 9, 30), et_iso(day, 9, 34), feed="iex"))
+                frames.append(await api.bars(syms[i : i + 700], "5Min", et_iso(day, 9, 30), et_iso(day, 9, 34), feed=FEED))
         bars = pd.concat(frames, ignore_index=True)
         if bars.empty:
             return []

@@ -20,7 +20,7 @@ function PreMarket({ pre, last }) {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
         <div><div className="text-zinc-500">Status</div><div>{pre.status ?? "—"}</div></div>
         <div><div className="text-zinc-500">Dip size</div><div className="tabular-nums">{pre.dip ? pct(pre.dip, 2) : "—"}</div></div>
-        <div><div className="text-zinc-500">VWAP / buy level</div><div className="tabular-nums">{pre.vwap ? `${num(pre.vwap)} / ${num(pre.level)}` : "—"}</div></div>
+        <div><div className="text-zinc-500">VWAP / buy level{pre.source ? ` · ${pre.source.toUpperCase()}` : ""}</div><div className="tabular-nums">{pre.vwap ? `${num(pre.vwap)} / ${num(pre.level)}` : "—"}</div></div>
         <div><div className="text-zinc-500">Position</div><div className="tabular-nums">{pre.qty > 0 ? `${num(pre.qty, 0)} @ ${num(pre.entry)}` : "—"}</div></div>
         <div><div className="text-zinc-500">Take profit</div><div className="tabular-nums">{pre.target ? num(pre.target) : "—"}</div></div>
         <div><div className="text-zinc-500">Open P&L</div><div className={`tabular-nums ${signClass(open)}`}>{money(open)}</div></div>

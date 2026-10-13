@@ -10,7 +10,8 @@
       "per_year": 90.4,
       "dd_reduce": -0.5501,
       "dd_off": -0.8192,
-      "period": "2021-01 .. 2026-09"
+      "period": "2021-01 .. 2026-09",
+      "slip_model": 0.0003
     },
     "scalp-pre": {
       "label": "Pre-market SOXL dip below VWAP",
@@ -21,7 +22,8 @@
       "per_year": 12.9,
       "dd_reduce": -0.0831,
       "dd_off": -0.1324,
-      "period": "2022-09 .. 2026-10"
+      "period": "2022-09 .. 2026-10",
+      "slip_model": 0.0
     }
   }
 }

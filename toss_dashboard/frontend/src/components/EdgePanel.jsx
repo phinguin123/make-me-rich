@@ -11,7 +11,7 @@ export default function EdgePanel({ edges, onEnable, busy }) {
         <table className="w-full text-xs tabular-nums">
           <thead className="bg-zinc-950 text-zinc-500">
             <tr>
-              {["Edge", "Status", "Size", "Live trades", "Live avg", "Backtest avg", "z", "Drawdown", "Live P&L", ""].map((h) => (
+              {["Edge", "Status", "Size", "Live trades", "Live avg", "Backtest avg", "z", "Drawdown", "Fill cost vs mid", "Live P&L", ""].map((h) => (
                 <th key={h} className="px-3 py-1.5 text-left font-normal">{h}</th>
               ))}
             </tr>
@@ -33,6 +33,10 @@ export default function EdgePanel({ edges, onEnable, busy }) {
                 <td className="px-3 py-1.5 text-zinc-200">{e.live.n ? num(e.live.z, 1) : "—"}</td>
                 <td className="px-3 py-1.5 text-zinc-200">
                   {pct(e.live.dd, 1)} <span className="text-zinc-500">/ off at {e.backtest?.dd_off != null ? pct(e.backtest.dd_off, 0) : "—"}</span>
+                </td>
+                <td className="px-3 py-1.5 text-zinc-200" title="per side, against the SIP NBBO mid at the fill">
+                  {e.fills?.n ? `${pct(e.fills.cost, 2)} (${e.fills.n} fills)` : "—"}
+                  {e.backtest?.slip_model != null && <span className="text-zinc-500"> / model {pct(e.backtest.slip_model, 2)}</span>}
                 </td>
                 <td className={`px-3 py-1.5 ${signClass(e.live.pnl)}`}>{money(e.live.pnl)}</td>
                 <td className="px-3 py-1.5">

@@ -54,7 +54,7 @@ def pre_trades() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["date", "net"])
 
 
-def stats(t: pd.DataFrame, label: str, source: str, rng: np.random.Generator) -> dict:
+def stats(t: pd.DataFrame, label: str, source: str, rng: np.random.Generator, slip_model: float) -> dict:
     r = t["net"].to_numpy()
     years = (t["date"].max() - t["date"].min()).days / 365.25
     per_year = len(r) / max(years, 0.5)
@@ -64,14 +64,15 @@ def stats(t: pd.DataFrame, label: str, source: str, rng: np.random.Generator) ->
     return {"label": label, "source": source, "mean": round(float(r.mean()), 5), "std": round(float(r.std(ddof=1)), 5),
             "n": int(len(r)), "per_year": round(per_year, 1),
             "dd_reduce": round(float(np.percentile(dd, 10)), 4), "dd_off": round(float(np.percentile(dd, 1)), 4),
-            "period": f"{t['date'].min():%Y-%m} .. {t['date'].max():%Y-%m}"}
+            "period": f"{t['date'].min():%Y-%m} .. {t['date'].max():%Y-%m}", "slip_model": slip_model}
 
 
 def main() -> None:
     rng = np.random.default_rng(7)
     edges = {
-        "scalp-orb": stats(orb_trades(), "SOXL/SOXS opening-range breakout (bear regime)", "research/scalp.py e2_orb 30m", rng),
-        "scalp-pre": stats(pre_trades(), "Pre-market SOXL dip below VWAP", "research/scalp_ext.py P5 pessimistic", rng),
+        # slip_model: per-side slippage the backtest assumed (compared with live fills vs the NBBO)
+        "scalp-orb": stats(orb_trades(), "SOXL/SOXS opening-range breakout (bear regime)", "research/scalp.py e2_orb 30m", rng, 0.0003),
+        "scalp-pre": stats(pre_trades(), "Pre-market SOXL dip below VWAP", "research/scalp_ext.py P5 pessimistic", rng, 0.0),
     }
     OUT.write_text(json.dumps({"generated": date.today().isoformat(), "edges": edges}, indent=2) + "\n")
     for k, v in edges.items():

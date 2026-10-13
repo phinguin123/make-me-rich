@@ -24,7 +24,9 @@ from .market import MarketData
 from .risk import RiskManager
 from .scanner import Scanner
 from .strategy import Position, Setup, StrategyConfig, arm, hold_overnight, initial_stop, update_trail
-from .edges import EdgeMonitor
+from .alpaca import AlpacaData
+from .alpaca_stream import AlpacaStream
+from .edges import EdgeMonitor, edge_for_tag
 from .scalp import SYMBOLS as SCALP_SYMBOLS, ScalpSleeve
 from .swing import SwingSleeve
 from . import macro as macro_data
@@ -46,7 +48,10 @@ class Engine:
         self.s = settings
         self.cfg = StrategyConfig.load()
         self.toss = TossClient()
-        self.market = MarketData(self.toss)
+        feed = settings.alpaca_feed if settings.alpaca_key and settings.alpaca_secret else "off"
+        self.alpaca = AlpacaData() if feed == "sip" else None  # SIP minute bars (Algo Trader Plus)
+        self.sip = AlpacaStream(settings.alpaca_key, settings.alpaca_secret, "sip") if feed == "sip" else None
+        self.market = MarketData(self.toss, self.alpaca)
         self.stream = TossStream(self.toss, settings.toss_account_seq)
         self.scanner = Scanner(self.toss, top_n=self.cfg.top_n)
         self.risk = RiskManager(settings)
@@ -194,6 +199,12 @@ class Engine:
             self.stream.on_order = self.broker.on_order_event
         self.stream.on_reconnect = self.broker.sync
         self._spawn(self.stream.run())
+        if self.alpaca:
+            await self.alpaca.open()
+        if self.sip:
+            self.sip.on_trade = lambda sym, px, sz, ts: self.market.on_trade(sym, px, sz, ts, src="sip")
+            self.sip.on_quote = lambda sym, bp, bs, ap, asz, ts: self.market.on_book(sym, bp, bs, ap, asz, ts, src="sip")
+            self._spawn(self.sip.run())
         self._update_subscriptions()
         self.log(f"Engine started in {self.broker.name.upper()} mode, capital ${self.s.capital:,.0f}")
         try:
@@ -216,9 +227,13 @@ class Engine:
                 if not pos.server_stop_id:
                     await self._place_server_stop(pos)
         self.stream.stop()
+        if self.sip:
+            self.sip.stop()
         for t in list(self._tasks):
             t.cancel()
         self._save()
+        if self.alpaca:
+            await self.alpaca.close()
         await self.toss.close()
         self.running = False
         self.log("Engine stopped")
@@ -373,7 +388,10 @@ class Engine:
         active = live_setups | set(self.positions)
         regime_syms = {"none": set(), "qqq_vwap": {"QQQ"}, "qqq_green": {"QQQ"}, "risk_on": {"QQQ", "VIXY"}}[self.cfg.regime]
         scalp_syms = set(SCALP_SYMBOLS) if self.scalp else set()
-        self.stream.set_symbols(trades=set(MACRO) | active | scalp_syms, books=active | ({"SOXL", "SOXS"} if self.scalp else set()))
+        books = active | ({"SOXL", "SOXS"} if self.scalp else set())
+        self.stream.set_symbols(trades=set(MACRO) | active | scalp_syms, books=books)
+        if self.sip:  # full tape + NBBO; Toss frames stay as the fallback
+            self.sip.set_symbols(trades=set(MACRO) | active | scalp_syms, quotes=books | scalp_syms)
         self.market.bar_symbols = active | regime_syms | ({"SOXL"} if self.scalp else set())
 
     async def _load_prev_closes(self) -> None:
@@ -642,6 +660,9 @@ class Engine:
 
     # ── fills ─────────────────────────────────────────────────────────────
     def _on_fill(self, order: Order, qty: float, price: float) -> None:
+        st = self.market.get(order.symbol)
+        if self.market.sip_fresh(order.symbol) and st.bid and st.ask:  # execution quality vs the NBBO
+            self.edges.record_fill(edge_for_tag(order.tag), order.side, price, st.bid, st.ask)
         if order.tag.startswith("scalp"):
             if self.scalp:
                 self.scalp.on_fill(order, qty, price)
@@ -752,6 +773,9 @@ class Engine:
             "now_et": now.strftime("%Y-%m-%d %H:%M:%S"),
             "session": {k: v.isoformat() for k, v in (self.session or {}).items()},
             "connected": self.stream.connected,
+            "feeds": {"toss_ws": self.stream.connected, "bars": self.market.bar_source,
+                      "sip": ({"connected": self.sip.connected, "error": self.sip.error, "messages": self.sip.messages}
+                              if self.sip else None)},
             "equity": self.equity(),
             "capital": self.s.capital,
             "realized_pnl": self.realized_pnl,

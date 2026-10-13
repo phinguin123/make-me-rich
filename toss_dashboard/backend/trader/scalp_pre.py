@@ -63,6 +63,7 @@ class PreState:
     entry_qty: float = 0.0
     target_id: str = ""
     target_filled: float = 0.0
+    source: str = ""  # where the VWAP came from: sip (Alpaca, as in the research) or toss
     note: str = ""
 
 
@@ -193,7 +194,26 @@ class PremarketDip:
                   f"(20-day vol {self.st.sigma:.1%})")
 
     async def refresh_vwap(self, now: datetime, pre_open: datetime) -> None:
-        """Pre-market VWAP from completed Toss 1-minute bars since 04:00 ET (Toss stamps bars with their end)."""
+        """Pre-market VWAP from completed 1-minute bars since 04:00 ET: Alpaca SIP bars (the research data),
+        else Toss candles (Toss stamps bars with their end)."""
+        alpaca = getattr(self.sl.market, "alpaca", None)
+        if alpaca is not None:
+            try:
+                df = await alpaca.bars([self.SYMBOL], "1Min", pre_open.isoformat(), now.isoformat(), feed="sip", adjustment="raw")
+                bars = {}
+                for row in df.itertuples(index=False):
+                    end = row.ts.tz_convert(ET).to_pydatetime() + timedelta(minutes=1)  # Alpaca stamps the start
+                    if pre_open < end <= now:
+                        bars[end] = (float(row.high), float(row.low), float(row.close), float(row.volume))
+                if bars:
+                    self.bars, self.st.source = bars, "sip"
+                    self._set_vwap()
+                    return
+            except Exception as exc:  # noqa: BLE001 — fall back to Toss candles
+                self._log(f"SIP bars failed ({exc}); using Toss candles", logging.WARNING)
+        if self.st.source == "sip":
+            self.bars.clear()  # don't mix sources in one VWAP
+        self.st.source = "toss"
         before = None
         backfill = not self.bars
         for _ in range(4):
@@ -212,6 +232,9 @@ class PremarketDip:
             before = res.get("nextBefore")
             if not backfill or not cs or not before or (oldest and oldest <= pre_open):
                 break
+        self._set_vwap()
+
+    def _set_vwap(self) -> None:
         pv = sum((h + l + c) / 3 * v for h, l, c, v in self.bars.values())
         vol = sum(v for *_, v in self.bars.values())
         if vol > 0:

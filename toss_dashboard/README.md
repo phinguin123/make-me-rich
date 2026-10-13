@@ -335,6 +335,20 @@ VWAP bug fix, had suggested 07:00 ET. On the book (3 slots, QQQ filter), by star
 - 30/70 stays: +40.2%/yr, Sharpe 1.81, max DD −16.6%, 1-in-20 bad year +5.5% (35/65 ties at 1.82).
 - Edge-monitor expectation: +0.96% per trade, about 119 trades a year.
 
+**Candidate, not built yet: bear-market bounce fade (SOXS)** (2026-10-14, `research/fade_soxs.py`).
+- Rule: while SOX is below its 200-day average, after SOXL gains 15%+ in 3 days, buy SOXS at the next
+  open. Sell when SOXL's 2-day RSI falls under 50 (the bounce cools), or after 10 days, or at −20%.
+- Real ETFs: +1.9% per trade in 2010–17 and +2.0% in 2018–26 (42–50 trades, 60% wins, worst −13%).
+- 1994–2009, synthetic 3x from the SOX index, never used to choose: +3.0% per trade (117 trades, t 3.0,
+  worst −20% with the stop).
+- It was the best of 125 daily overbought rules. Most of the rest lost: the median rule made −0.41% per
+  trade, with worst trades of −37% to −47%.
+- By year (real): 2011 +14%, 2012 +21%, 2018 +26%, 2022 +25%, 2025 +18%; 2019 −12%, 2023 −15%.
+- It only fires in semis bear markets (about 3 trades a year on average), so not now. It holds SOXS
+  overnight, which the scalp sleeve never does: it needs its own place in the allocation before it
+  goes live.
+- An older variant held 20 days and lost 9.8% per trade. The quick exit makes the difference.
+
 **Tested and rejected:**
 - **Waiting for confirmation after the open** (2026-10-14, `research/open_reversal.py`). Families tested:
   bounce off the low, winning back part of the drop, reclaiming the open or VWAP, opening-range
@@ -352,6 +366,15 @@ VWAP bug fix, had suggested 07:00 ET. On the book (3 slots, QQQ filter), by star
   - One pocket held in both halves: an opening-range reversal (5-minute range) after a flush of 2+ dips
     below the pre-market VWAP, +1.0% to +1.5% per trade. But it's ~15 trades a year (t ≈ 1.5): too
     thin to trust. Watch list, not traded.
+- **Fading an overbought SOXL with SOXS, intraday** (2026-10-14, `research/fade_soxs.py`). Signals on
+  SOXL's 1/5/15-minute chart, traded on SOXS's real prices: RSI above 70/80/85, RSI rolling back
+  under 70/80, MACD crossing down from above 0, rejection at the upper band, a stretch above VWAP, and
+  a volume climax.
+  - 381 variants: 3% positive after costs. The same rules on TQQQ to SQQQ: 1% positive.
+  - Overbought predicts more rise, not a fall. On the 14 names, before costs, the price kept rising
+    after RSI went above 85: +0.10% after 30 minutes, +0.35% by 15:55.
+  - Watch list only: a 1-minute volume climax (5x volume up bar, then a down bar) in semis downtrends
+    made +0.37% in 2021–23 and +0.90% in 2024–26. But it's ~9 trades a year and failed on TQQQ to SQQQ.
 - **Chart indicators** (2026-10-14, `research/indicators.py`): RSI, MACD, volume vs normal for the time of
   day, EMA 9/21 and Bollinger bands, alone and combined. 429 strategies on 1-, 5- and 15-minute charts with
   three kinds of exit.

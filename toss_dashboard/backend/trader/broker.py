@@ -62,6 +62,8 @@ class Broker:
         self.market = market
         self.commission = commission
         self.orders: dict[str, Order] = {}
+        self.guard = None  # trader.guard.OrderGuard (set by the engine); None = no run-time limits
+        self.on_refuse: Callable[[str], None] | None = None
         self.on_fill: FillCb | None = None
         self.on_update: Callable[[Order], None] | None = None
 
@@ -83,6 +85,23 @@ class Broker:
 
     async def sync(self) -> None:
         """Reconcile order state with the broker (no-op for paper)."""
+
+    def _refused(self, symbol: str, side: str, qty: float, limit: float | None, tag: str, amount: float | None = None) -> Order | None:
+        """Run the order guard; returns a REJECTED order if the order breaks a hard limit."""
+        if self.guard is None:
+            return None
+        why = self.guard.check(symbol, side, qty, limit, tag, amount)
+        if not why:
+            return None
+        o = Order(id=f"guard-{uuid.uuid4().hex[:10]}", client_id="", symbol=symbol, side=side, qty=qty, limit=limit, tag=tag,
+                  status="REJECTED", error=f"guard: {why}")
+        self.orders[o.id] = o
+        jr("O", o.id, symbol, side, qty if amount is None else -round(amount, 2), limit, tag)
+        jr("X", o.id, "REJECTED", o.error)
+        LOG.error("Order refused by the guard: %s %s %s [%s]: %s", side, symbol, qty if amount is None else f"${amount:.2f}", tag, why)
+        if self.on_refuse:
+            self.on_refuse(f"Order refused by the guard: {side} {symbol} [{tag}]: {why}")
+        return o
 
     def open_orders(self, symbol: str | None = None) -> list[Order]:
         return [o for o in self.orders.values() if not o.done and (symbol is None or o.symbol == symbol)]
@@ -114,6 +133,8 @@ class PaperBroker(Broker):
         self._cash = capital
 
     async def submit(self, symbol: str, side: str, qty: float, limit: float | None, tag: str) -> Order:
+        if refused := self._refused(symbol, side, qty, limit, tag):
+            return refused
         o = Order(id=f"paper-{uuid.uuid4().hex[:10]}", client_id=client_order_id(symbol, tag), symbol=symbol, side=side, qty=qty, limit=limit, tag=tag)
         if side == "BUY":
             need = qty * (limit or self.market.get(symbol).ask or self.market.get(symbol).last) * (1 + self.commission)
@@ -131,6 +152,8 @@ class PaperBroker(Broker):
         return o
 
     async def submit_amount(self, symbol: str, amount: float, tag: str) -> Order:
+        if refused := self._refused(symbol, "BUY", 0.0, None, tag, amount):
+            return refused
         o = Order(id=f"paper-{uuid.uuid4().hex[:10]}", client_id=client_order_id(symbol, tag), symbol=symbol, side="BUY", qty=0.0, limit=None, tag=tag)
         self.orders[o.id] = o
         px = self.market.get(symbol).ask or self.market.get(symbol).last
@@ -199,6 +222,8 @@ class TossBroker(Broker):
         self.client = client
 
     async def submit(self, symbol: str, side: str, qty: float, limit: float | None, tag: str) -> Order:
+        if refused := self._refused(symbol, side, qty, limit, tag):
+            return refused
         cid = client_order_id(symbol, tag)
         o = Order(id="", client_id=cid, symbol=symbol, side=side, qty=qty, limit=limit, tag=tag)
         try:
@@ -216,6 +241,8 @@ class TossBroker(Broker):
         return o
 
     async def submit_amount(self, symbol: str, amount: float, tag: str) -> Order:
+        if refused := self._refused(symbol, "BUY", 0.0, None, tag, amount):
+            return refused
         cid = client_order_id(symbol, tag)
         o = Order(id="", client_id=cid, symbol=symbol, side="BUY", qty=0.0, limit=None, tag=tag)
         try:

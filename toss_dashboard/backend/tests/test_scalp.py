@@ -167,3 +167,75 @@ def test_single_fat_finger_print_does_not_stop_out(tmp_path):
     assert sleeve.st.qty > 0
     run(sleeve, t0 + timedelta(seconds=5.5))
     assert sleeve.st.qty == 0 and sleeve.st.trades[-1]["reason"] == "stop"
+
+
+class FakeTossStops(FakeToss):
+    def __init__(self, closes):
+        super().__init__(closes)
+        self.stops, self.cancelled, self.fired, self.left = {}, [], False, None
+
+    async def create_stop(self, symbol, quantity, trigger, limit, cid):
+        self.stops["c1"] = (symbol, quantity, trigger, limit)
+        return {"conditionalOrderId": "c1"}
+
+    async def cancel_conditional(self, sid):
+        from trader.toss.client import TossAPIError
+        if self.fired:
+            raise TossAPIError(400, "already-executed", "done")
+        self.cancelled.append(sid)
+
+    async def conditional_orders(self, status="OPEN"):
+        return [] if self.fired else [{"conditionalOrderId": "c1"}]
+
+    async def sellable_quantity(self, symbol):
+        return self.left
+
+
+def live_sleeve(tmp_path):
+    sleeve, md = make(tmp_path, [90] + [100] * 49)
+    sleeve.toss = FakeTossStops([90] + [100] * 49)
+    sleeve.s = Settings(mode="live", scalp_capital=2000.0, scalp_force_day="", scalp_position_frac=0.5)
+    asyncio.run(sleeve.prepare(TODAY))
+    opening_range(md)
+    sleeve.on_minute(OPEN + timedelta(minutes=31), OPEN)
+    quote(md, "SOXL", 104.2)
+    run(sleeve, OPEN + timedelta(minutes=35))  # 10:05: entry, too early for the backup stop
+    assert sleeve.st.qty > 0 and not sleeve.st.backup_id
+    run(sleeve, OPEN + timedelta(minutes=16 + 30))  # 10:16 > 09:45: backup placed
+    return sleeve, md
+
+
+def test_backup_stop_far_below_and_removed_before_the_bot_sells(tmp_path):
+    sleeve, md = live_sleeve(tmp_path)
+    sym, qty, trigger, limit = sleeve.toss.stops["c1"]
+    assert sleeve.st.backup_id == "c1" and sym == "SOXL" and qty == int(sleeve.st.qty)
+    assert abs(trigger / sleeve.st.entry - 0.90) < 0.002 and limit < trigger
+    asyncio.run(sleeve.eod())
+    assert sleeve.toss.cancelled == ["c1"] and sleeve.st.qty == 0 and sleeve.st.trades[-1]["reason"] == "close"
+
+
+def test_backup_stop_that_already_fired_is_booked_not_sold_twice(tmp_path):
+    sleeve, md = live_sleeve(tmp_path)
+    sleeve.toss.fired, sleeve.toss.left = True, 0.0  # the bot was down; Toss sold at the trigger
+    sells = []
+    orig = sleeve.broker.submit
+
+    async def spy(*a, **k):
+        sells.append(a)
+        return await orig(*a, **k)
+
+    sleeve.broker.submit = spy
+    asyncio.run(sleeve.eod())
+    assert sleeve.st.qty == 0 and sleeve.st.trades[-1]["reason"] == "backup-stop" and not sells
+
+
+def test_no_backup_stop_in_paper_mode(tmp_path):
+    sleeve, md = make(tmp_path, [90] + [100] * 49)
+    sleeve.toss = FakeTossStops([90] + [100] * 49)
+    asyncio.run(sleeve.prepare(TODAY))
+    opening_range(md)
+    sleeve.on_minute(OPEN + timedelta(minutes=31), OPEN)
+    quote(md, "SOXL", 104.2)
+    run(sleeve, OPEN + timedelta(minutes=35))
+    run(sleeve, OPEN + timedelta(minutes=60))
+    assert sleeve.st.qty > 0 and not sleeve.toss.stops

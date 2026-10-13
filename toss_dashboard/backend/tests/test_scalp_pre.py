@@ -75,7 +75,7 @@ def ready(sleeve, md):
 def test_dip_buys_at_level_and_takes_profit(tmp_path):
     sleeve, md, broker = make(tmp_path)
     pre = ready(sleeve, md)
-    quote(md, pre.level - 0.05)
+    quote(md, round(pre.level * 0.995, 2))
     tick(sleeve, at(7, 31, 10))
     assert pre.status == "in_trade" and pre.qty == 10  # 50% of $2,000 at ~$98
     assert pre.target > pre.entry * (1 + pre.dip) - 0.01
@@ -89,7 +89,7 @@ def test_dip_buys_at_level_and_takes_profit(tmp_path):
 def test_unfilled_target_sold_before_the_open(tmp_path):
     sleeve, md, broker = make(tmp_path)
     pre = ready(sleeve, md)
-    quote(md, pre.level - 0.05)
+    quote(md, round(pre.level * 0.995, 2))
     tick(sleeve, at(7, 31, 10))
     assert pre.qty == 10
     quote(md, pre.level + 0.2)
@@ -102,7 +102,7 @@ def test_unfilled_target_sold_before_the_open(tmp_path):
 def test_no_entry_before_seven_when_paused_or_after_cutoff(tmp_path):
     sleeve, md, _ = make(tmp_path)
     pre = ready(sleeve, md)
-    quote(md, pre.level - 0.05)
+    quote(md, round(pre.level * 0.995, 2))
     tick(sleeve, at(6, 59))
     assert pre.qty == 0 and pre.status == "watching"
     sleeve.entries_blocked = lambda: True
@@ -119,18 +119,20 @@ def test_unfilled_entry_is_cancelled_and_rearmed(tmp_path):
     pre = ready(sleeve, md)
     sleeve.pre.cfg.rest_seconds = 0.6
     st = md.get("SOXL")
-    st.last, st.last_ts, st.bid, st.ask = pre.level - 0.01, datetime.now(ET), pre.level - 0.02, pre.level + 0.10  # ask above our limit
+    st.last, st.last_ts, st.bid, st.ask = round(pre.level * 0.996, 2), datetime.now(ET), round(pre.level * 0.995, 2), pre.level + 0.10  # a print through the level, ask above our limit
     tick(sleeve, at(7, 45))
-    assert pre.qty == 0 and pre.status == "watching" and pre.attempts == 1
-    assert not broker.open_orders()
+    assert pre.status == "entry_open" and pre.attempts == 1 and broker.open_orders()  # resting at the level
+    tick(sleeve, at(7, 46))  # its time is up: cancelled, watching again
+    assert pre.qty == 0 and pre.status == "watching" and not broker.open_orders()
     tick(sleeve, at(7, 50))
+    tick(sleeve, at(7, 51))
     assert pre.status == "done" and pre.attempts == 2  # second miss: done for the day
 
 
 def test_state_survives_restart(tmp_path):
     sleeve, md, broker = make(tmp_path)
     pre = ready(sleeve, md)
-    quote(md, pre.level - 0.05)
+    quote(md, round(pre.level * 0.995, 2))
     tick(sleeve, at(7, 31, 10))
     again = ScalpSleeve(sleeve.s, broker, md, FakeToss(), lambda urgent: True, lambda msg, lvl=20: None)
     again.path = sleeve.path

@@ -6,7 +6,8 @@
 #   ./deploy_oracle.sh oracle --force       skip the "bot is mid-trade" guard (never needed normally)
 #
 # Safety:
-#   1. the unit tests must pass locally, or nothing is copied
+#   1. the unit tests must pass locally, and the replay check (the live strategy code traded over past
+#      days must match the research backtests: python -m trader.replay --gate), or nothing is copied
 #   2. refuses to restart while the bot holds a scalp/pre-market/intraday position or has an order
 #      working (a restart is safe then too, but there is no reason to take the risk)
 #   3. the running image is kept as :prev; if the new engine isn't running 90 s after the restart,
@@ -33,6 +34,15 @@ echo "→ tests"
 (cd toss_dashboard/backend && ../../.venv/bin/python -m pytest -q tests >/tmp/deploy_tests.log 2>&1) || {
   tail -30 /tmp/deploy_tests.log; echo "Tests failed: nothing deployed." >&2; exit 1; }
 tail -1 /tmp/deploy_tests.log
+
+echo "→ replay check (live strategy code vs the research backtests on past days)"
+if [[ -f toss_dashboard/backend/data/research/scalp/alpaca_1m.parquet ]]; then
+  (cd toss_dashboard/backend && ../../.venv/bin/python -m trader.replay --gate >/tmp/deploy_replay.log 2>&1) || {
+    grep -v "refused by the guard" /tmp/deploy_replay.log | tail -25; echo "Replay parity failed: nothing deployed." >&2; exit 1; }
+  grep -E "breakout:|pre-market:|guard refusals|parity gate" /tmp/deploy_replay.log | sed 's/^/  /'
+else
+  echo "  (no local research data: replay check skipped)"
+fi
 
 if [[ "$MODE" != "--no-start" && "$MODE" != "--force" ]]; then
   echo "→ checking the bot is not mid-trade"

@@ -46,6 +46,7 @@ class PreConfig:
     max_dip: float = 0.06
     rest_seconds: float = 600  # an unfilled entry rests at the level this long (backtest: 10 minutes)
     max_attempts: int = 2
+    through: float = 0.003  # buy only once the price trades this far below the level (as the research required)
 
 
 @dataclass
@@ -62,6 +63,7 @@ class PreState:
     attempts: int = 0
     entry_id: str = ""
     entry_qty: float = 0.0
+    rest_until: str = ""  # an unfilled entry order is cancelled at this time (ISO, ET)
     target_id: str = ""
     target_filled: float = 0.0
     source: str = ""  # where the VWAP came from: sip (Alpaca, as in the research) or toss
@@ -83,6 +85,7 @@ class PremarketDip:
         self._resumed = False
         self._exit_after: datetime | None = None  # back-off between failed exit rounds
         self.target_order: Order | None = None
+        self.entry_order: Order | None = None
 
     # ── helpers ───────────────────────────────────────────────────────────
     def _at(self, day: date, t: time) -> datetime:
@@ -115,6 +118,13 @@ class PremarketDip:
         if pre["open"] <= now < cutoff and minute != self._minute and now.second >= 2:
             self._minute = minute
             spawn(self._guard(self.refresh_vwap(now, pre["open"]), hold=False))
+        if self.st.status == "entry_open":  # a resting entry: finished on a fill, when its time is up, or at the cutoff
+            o = self.entry_order
+            rest_over = bool(self.st.rest_until) and now >= datetime.fromisoformat(self.st.rest_until)
+            if o is None or o.done or rest_over or now >= cutoff:
+                self.busy = True
+                spawn(self._guard(self._finish_entry()))
+            return
         if self.st.qty > 0 and (now >= exit_at or self.st.status == "exit_pending"):
             if self.st.status != "exiting" and (self._exit_after is None or now >= self._exit_after):
                 self.busy = True
@@ -126,7 +136,7 @@ class PremarketDip:
                 self.sl.save()
             elif now >= start and self.st.level and not self.sl.entries_blocked():
                 px = self._fresh()
-                if px and px <= self.st.level:
+                if px and px <= self.st.level * (1 - self.cfg.through):
                     self.busy = True
                     spawn(self._guard(self._enter(today)))
 
@@ -261,24 +271,24 @@ class PremarketDip:
                                    "attempt": self.st.attempts})
         self._log(f"BUY SOXL {qty} @ {level} limit (dip {self.st.dip:.2%} below VWAP {self.st.vwap:.2f})")
         order = await sl.broker.submit(self.SYMBOL, "BUY", qty, level, "scalp-pre-entry")
+        self.entry_order = order
         self.st.entry_id, self.st.entry_qty = order.id, qty
+        self.st.rest_until = ((self.now or datetime.now(ET)) + timedelta(seconds=self.cfg.rest_seconds)).isoformat()
         sl.save()
-        loop = asyncio.get_running_loop()
-        end = loop.time() + self.cfg.rest_seconds
-        cutoff = self._at(today, self.cfg.cutoff)
-        while not order.done and loop.time() < end and (self.now or datetime.now(ET)) < cutoff:
-            try_fill = getattr(sl.broker, "try_fill", None)
-            if try_fill:
-                try_fill(order)
-            await asyncio.sleep(0.5)
-        if not order.done:
-            await sl.broker.cancel(order)
-            await sl._wait(order, 3)
-        self.st.entry_id = ""
+        if order.done:  # filled at once (marketable) or rejected
+            await self._finish_entry()
+
+    async def _finish_entry(self) -> None:
+        """End a resting entry: cancel what's left, then take-profit (if anything filled) or watch again."""
+        o = self.entry_order
+        if o is not None and not o.done:
+            await self.sl.broker.cancel(o)
+            await self.sl._wait(o, 3)
+        self.entry_order, self.st.entry_id, self.st.rest_until = None, "", ""
         if self.st.qty > 0:
             await self._place_target()
-        elif order.status == "REJECTED":
-            self.st.status, self.st.note = "done", f"entry rejected ({order.error})"
+        elif o is not None and o.status == "REJECTED":
+            self.st.status, self.st.note = "done", f"entry rejected ({o.error})"
         elif self.st.attempts < self.cfg.max_attempts:
             self.st.status, self.st.note = "watching", "entry not filled; watching again"
         else:

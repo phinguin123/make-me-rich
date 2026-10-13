@@ -42,6 +42,11 @@ class ScalpConfig:
     position_frac: float = 0.5  # of sleeve equity per trade (1.0 doubled both return and drawdown in the backtest)
     max_chase: float = 0.004
     confirm_seconds: float = 3.0  # a level counts as crossed when the bid/ask agrees, or the price stays past it this long
+    # Backup stop at Toss, only for the case the bot itself is down: far away (spikes of this size are
+    # ~0.1% of regular-session days on SIP and Toss-only spikes ~0.4%), regular hours only.
+    backup_stop: float = 0.10
+    backup_from: time = time(9, 45)
+    backup_until: time = time(15, 50)
 
 
 @dataclass
@@ -57,6 +62,8 @@ class ScalpState:
     qty: float = 0.0
     entry: float = 0.0
     note: str = ""
+    backup_id: str = ""  # Toss conditional order protecting the open breakout position
+    backup_trigger: float = 0.0
     trades: list = field(default_factory=list)
 
 
@@ -75,6 +82,9 @@ class ScalpSleeve:
         self.st = ScalpState()
         self.busy = False
         self._cross: dict[str, datetime] = {}  # first time each level crossing was seen (fat-finger filter)
+        self._backup_busy = False
+        self._prep_day: date | None = None
+        self._eod_day: date | None = None
         self.retry_seconds = 60.0  # Toss unreachable (e.g. IP not yet allowlisted): retry the regime fetch
         self.pre = PremarketDip(self) if settings.scalp_pre else None
         self.fresh = not self.path.exists()  # never ran: owns no money yet (see allocator)
@@ -154,6 +164,21 @@ class ScalpSleeve:
         jr("D", "orb", "regime", {"soxx": self.st.soxx_close, "ma": self.st.soxx_ma, "regime": self.st.regime, "status": self.st.status})
         self.save()
 
+    # ── scheduling (the engine calls this every tick on trading days; the replay check does too) ──
+    def tick(self, now: datetime, session: dict, pre_session: dict | None, spawn: Callable) -> None:
+        open_, close_ = session["open"], session["close"]
+        today = now.date()
+        if self.pre and pre_session:
+            self.pre.tick(now, pre_session, open_, spawn)
+        if self._prep_day != today and open_ - timedelta(minutes=60) <= now < close_:
+            self._prep_day = today
+            spawn(self.prepare(today))
+        if open_ <= now < close_ - timedelta(minutes=3):
+            self.evaluate(now, open_, spawn)
+        if self._eod_day != today and close_ - timedelta(minutes=3) <= now < close_ + timedelta(minutes=1):
+            self._eod_day = today
+            spawn(self.eod())
+
     # ── intraday ──────────────────────────────────────────────────────────
     def on_minute(self, now: datetime, session_open: datetime) -> None:
         if self.st.status != "waiting":
@@ -190,6 +215,10 @@ class ScalpSleeve:
                 self.busy = True
                 spawn(self._enter("SOXS", None))
         elif self.st.status == "in_trade" and self.st.qty > 0:
+            if (not self.st.backup_id and not self._backup_busy and self.s.live and hasattr(self.toss, "create_stop")
+                    and self.cfg.backup_from <= now.time() < self.cfg.backup_until):
+                self._backup_busy = True
+                spawn(self._place_backup())
             stop = (self._crossed("stop", soxl <= self.st.or_low, lambda b, a: b <= self.st.or_low, now) if self.st.side == "SOXL"
                     else self._crossed("stop", soxl >= self.st.or_high, lambda b, a: a >= self.st.or_high, now))
             if stop:
@@ -251,12 +280,74 @@ class ScalpSleeve:
             self.busy = False
             self.save()
 
+    # ── backup stop at Toss (bot-down protection) ─────────────────────────
+    async def _place_backup(self) -> None:
+        try:
+            if self.st.qty <= 0 or self.st.backup_id:
+                return
+            side, qty = self.st.side, int(self.st.qty)
+            trigger = math.floor(self.st.entry * (1 - self.cfg.backup_stop) * 100) / 100
+            limit = max(0.01, math.floor(trigger * 0.97 * 100) / 100)
+            cid = f"tbs-{side}-{int(datetime.now(ET).timestamp())}"
+            try:
+                res = await self.toss.create_stop(side, qty, trigger, limit, cid)
+            except TossAPIError as exc:
+                self.log(f"Scalp: backup stop not placed ({exc}); the bot's own stop still runs", logging.WARNING)
+                return
+            self.st.backup_id, self.st.backup_trigger = str(res.get("conditionalOrderId") or ""), trigger
+            jr("D", "orb", "backup", {"side": side, "qty": qty, "trigger": trigger, "limit": limit, "id": self.st.backup_id})
+            self.log(f"Scalp: backup stop at Toss for {qty} {side} at {trigger} (only fires if the bot is down)", logging.INFO)
+            self.save()
+        finally:
+            self._backup_busy = False
+
+    async def _drop_backup(self) -> None:
+        """Remove the Toss backup stop before the bot sells itself. If it already fired, book that sale."""
+        sid = self.st.backup_id
+        if not sid:
+            return
+        try:
+            await self.toss.cancel_conditional(sid)
+            self.st.backup_id = ""
+            jr("D", "orb", "backup_cancel", {"id": sid})
+        except TossAPIError as exc:
+            still_open = True
+            try:
+                res = await self.toss.conditional_orders("OPEN")
+                items = res.get("conditionalOrders", res) if isinstance(res, dict) else res
+                still_open = any(str(c.get("conditionalOrderId")) == sid for c in (items or []))
+            except TossAPIError:
+                pass
+            if still_open:
+                self.log(f"Scalp: could not cancel the backup stop ({exc}); selling anyway", logging.WARNING)
+                return
+            self.st.backup_id = ""
+            try:
+                left = await self.toss.sellable_quantity(self.st.side)
+            except TossAPIError:
+                left = self.st.qty
+            if left + 1e-9 < self.st.qty:  # the backup stop sold while we weren't looking
+                sold = self.st.qty - left
+                px = self.st.backup_trigger
+                pnl = sold * px * (1 - self.broker.commission) - sold * self.st.entry
+                self.cash += sold * px * (1 - self.broker.commission)
+                self.realized += pnl
+                self.st.qty = left
+                self.st.trades.append({"day": self.st.day, "side": self.st.side, "qty": sold, "entry": round(self.st.entry, 4),
+                                       "exit": px, "pnl": round(pnl, 2), "reason": "backup-stop"})
+                self.log(f"Scalp: the Toss backup stop had sold {sold:g} {self.st.side} near {px}", logging.WARNING)
+            self.save()
+
     async def _exit(self, reason: str, claimed: bool = False) -> None:
         if (self.busy and not claimed) or self.st.qty <= 0:
             self.busy = False if claimed else self.busy
             return
         self.busy = True
         try:
+            await self._drop_backup()
+            if self.st.qty <= 1e-9:
+                self.st.status = "done"
+                return
             side = self.st.side
             for cushion in (0.003, 0.01, None):
                 if self.st.qty <= 0 or not self.allow_order(True):

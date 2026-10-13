@@ -29,6 +29,7 @@ from .allocator import Allocator
 from .alpaca import AlpacaData
 from .alpaca_stream import AlpacaStream
 from .edges import EdgeMonitor, edge_for_tag
+from .guard import OrderGuard
 from .journal import J, jr, write_summary
 from .scalp import SYMBOLS as SCALP_SYMBOLS, ScalpSleeve
 from .swing import SwingSleeve
@@ -75,10 +76,11 @@ class Engine:
         self.broker.on_fill = self._on_fill
         self.swing = SwingSleeve(settings, self.broker, self._swing_prices, self.log) if settings.swing_capital > 0 else None
         self.edges = EdgeMonitor(DATA_DIR / f"edges_{self.broker.name}.json", self.log)
+        self.broker.guard = OrderGuard(self._bot_money, self._fresh_quote, self.broker.open_orders)
+        self.broker.on_refuse = self._warn
         self.scalp = (ScalpSleeve(settings, self.broker, self.market, self.toss, self.risk.allow_order, self.log,
                                   entries_blocked=lambda: self.paused or self.risk.status.halted, monitor=self.edges)
                       if settings.scalp_capital > 0 else None)
-        self._scalp_prep_day: date | None = None
         self.allocator = (Allocator({"scalp": settings.alloc_scalp, "swing": settings.alloc_swing}, self.scalp, self.swing,
                                     self.broker, DATA_DIR / f"alloc_{self.broker.name}.json", self.log,
                                     yearly=settings.alloc_rebalance == "yearly", halt_dd=settings.account_dd_halt,
@@ -228,6 +230,22 @@ class Engine:
         keep: set[str] = set()
         if self.scalp and self.scalp.pre:
             keep |= {self.scalp.pre.st.target_id, self.scalp.pre.st.entry_id} - {""}
+        keep_cond = {p.server_stop_id for p in self.positions.values() if p.server_stop_id}
+        if self.scalp and self.scalp.st.backup_id and self.scalp.st.qty > 0:
+            keep_cond.add(self.scalp.st.backup_id)
+        try:  # backup stops at Toss left by a previous run for positions that no longer exist
+            res = await self.toss.conditional_orders("OPEN")
+            items = res.get("conditionalOrders", res) if isinstance(res, dict) else res
+            for c in items or []:
+                cid, coid = str(c.get("clientOrderId") or ""), str(c.get("conditionalOrderId") or "")
+                if cid.startswith("tbs-") and coid not in keep_cond:
+                    await self.toss.cancel_conditional(coid)
+                    self.log(f"Cancelled a stale backup stop {c.get('symbol')} left by a previous run", logging.WARNING)
+            if self.scalp and self.scalp.st.backup_id and self.scalp.st.qty <= 0:
+                self.scalp.st.backup_id = ""
+                self.scalp.save()
+        except (TossAPIError, AttributeError) as exc:
+            self.log(f"backup-stop check at startup failed: {exc}", logging.WARNING)
         if self.swing:
             keep |= set(self.swing.pending)
         try:
@@ -329,6 +347,17 @@ class Engine:
         except TossAPIError as exc:
             self._warn(f"Toss account check failed: {exc}")
 
+    def _bot_money(self) -> float:
+        if self.allocator:
+            return self.allocator.total()
+        return self.s.capital + self.s.swing_capital + self.s.scalp_capital
+
+    def _fresh_quote(self, symbol: str) -> tuple[float, float]:
+        st = self.market.get(symbol)
+        if st.bid and st.ask and st.quote_ts and (datetime.now(ET) - st.quote_ts).total_seconds() < 10:
+            return st.bid, st.ask
+        return 0.0, 0.0
+
     def _on_breach(self, msg: str) -> None:
         self.paused = True
         self._warn(msg)
@@ -389,8 +418,6 @@ class Engine:
             await asyncio.sleep(5)
             return
         open_, close_ = self.session["open"], self.session["close"]
-        if self.scalp and self.scalp.pre and self.pre_session:
-            self.scalp.pre.tick(now, self.pre_session, open_, self._spawn)
         if self.day != today and now >= open_ - timedelta(hours=2):
             self._new_day(today)
         intraday_on = self.s.capital > 0
@@ -420,20 +447,14 @@ class Engine:
                   and open_ + timedelta(minutes=6) <= now < close_ - timedelta(minutes=70)):
                 self._swing_trade_day = today
                 self._spawn(self.swing.rebalance(today, self._swing_cash, self.risk.allow_order, buys_allowed=lambda: not self.paused))
-        if self.scalp:
-            if self._scalp_prep_day != today and open_ - timedelta(minutes=60) <= now < close_:
-                self._scalp_prep_day = today
-                self._spawn(self.scalp.prepare(today))
-            if open_ <= now < close_ - timedelta(minutes=3):
-                self.scalp.evaluate(now, open_, self._spawn)
+        if self.scalp:  # pre-market, regular-session breakout and its end of day: all in the sleeve
+            self.scalp.tick(now, self.session, self.pre_session, self._spawn)
         if time_module.monotonic() - self._macro_ext_at > 600:
             self._macro_ext_at = time_module.monotonic()
             self._spawn(self._refresh_macro_ext())
         if not self.eod_done and now >= close_ - timedelta(minutes=3) and now < close_ + timedelta(minutes=1):
             self.eod_done = True
             self._spawn(self._eod())
-            if self.scalp:
-                self._spawn(self.scalp.eod())
         if isinstance(self.broker, PaperBroker):
             self.broker.on_quote()
 

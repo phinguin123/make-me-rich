@@ -64,7 +64,7 @@ def test_sleeve_reports_trades_and_obeys_switch_off(tmp_path):
     sleeve, md, broker = tp.make(tmp_path)
     sleeve.monitor = EdgeMonitor(tmp_path / "edges.json")
     pre = tp.ready(sleeve, md)
-    tp.quote(md, pre.level - 0.05)
+    tp.quote(md, round(pre.level * 0.995, 2))
     tp.tick(sleeve, tp.at(7, 31, 10))
     tp.quote(md, pre.target + 0.05)
     broker.on_quote()

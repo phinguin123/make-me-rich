@@ -249,6 +249,71 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
+## Safety nets: catching what unit tests can't
+
+| Layer | When | What it catches |
+|---|---|---|
+| Unit tests (58) | every deploy | broken pieces: sizing, fills, state, guard rules, journal |
+| **Replay check** (`python -m trader.replay --gate`) | every deploy, about 40 s on 20 cores | the live strategy code behaving differently from the validated research on real past days |
+| **Order guard** (`trader/guard.py`) | every order, live | anything a bug asks for that is clearly wrong |
+| Edge monitor | every closed trade | an edge that broke in live trading (results vs the backtest distribution) |
+| Drawdown breaker | always | the whole bot losing 20% from its peak |
+| Deploy guard + rollback | every deploy | restarting mid-trade; a version that doesn't start |
+| Journal | always | everything, for diagnosis afterwards |
+
+### Replay check
+
+It runs the real `ScalpSleeve` / `PremarketDip` classes, with the order guard switched on and the
+engine's own scheduling method (`ScalpSleeve.tick`), over 327 past days (2023-10 to 2026-10) of
+SIP minute data. A simulated clock and a paper broker use the research's fill rules. Each day is
+compared with `e2_orb` (breakout) and `_dip_trade` (pre-market).
+
+**Current result:**
+- Breakout: same side on 99% of research days, 0 trades the research didn't make, return gap
+  −0.07% per trade.
+- Pre-market: both agree on 85% of days with a trade, return gap +0.2%.
+- No guard refusals and no exceptions.
+
+**The deploy fails if any of these happens:**
+- Breakout agreement falls below 85%, live-only breakout days exceed 5%, or the breakout return
+  gap exceeds 0.25%.
+- Pre-market agreement falls below 75%, or its return gap exceeds 0.5%.
+- The guard refuses a single order, or anything raises an exception.
+
+**Planted-bug test (each bug passes the unit tests; the replay blocks all three):**
+
+| Planted bug | Replay result |
+|---|---|
+| 15-minute range instead of 30 | same side on 37% of days |
+| Buying the wrong ETF | 0% |
+| Wrong pre-market dip size | 43% agreement |
+
+**What it found in the live code on its first runs:**
+- The pre-market entry bought on a bare touch of the level. The validated research required a
+  0.3% trade-through, so the live rule now matches it.
+- The 10-minute entry wait was a blocking coroutine. It's now tick-driven.
+- The guard's price rule was too strict after spikes. It's now ±10%.
+
+### Order guard
+
+Every order is checked; a violation is refused, logged as an error and journaled as `X ... guard:`:
+- **Symbols:** scalp trades only SOXL/SOXS; other sleeves never leveraged or inverse ETFs, except
+  the SOXS hedge.
+- **Size:** one buy is at most 60% (scalp), 25% (swing) or 35% (intraday) of the bot's money.
+- **Price:** no buy limit more than 10% above the market and no sell limit more than 10% below it.
+- **Time:** scalp buys only 07:00–09:01 and 09:59–11:31 ET.
+- **Count:** at most 30 / 60 / 100 orders a day.
+- **Doubles:** no second scalp buy while one is working.
+
+Exits are never blocked by the size, time or count rules.
+
+### Backup stop at Toss (regular hours only)
+
+While a breakout position is open, from 09:45 to 15:50 ET, a Toss conditional sell sits about 10%
+below entry (limit 3% under the trigger). It's removed before the bot sells itself. If it fired
+while the bot was down, the bot books that sale instead of selling twice. It's never used in the
+pre-market or after-hours (see below).
+
 ## Fat-finger spikes and stops (measured 2026-10-13)
 
 **Spike frequency.** Spikes are 1-minute wicks below the prevailing price that recovered within
@@ -274,9 +339,8 @@ consolidated market never printed. A low ≥2% below the SIP low happened on 24%
 - **Breakout entries and stops need confirmation.** A single print past the level isn't enough:
   the SIP bid/ask (fresh within 5 s) must agree, or the price must stay past the level for 3 s.
   Unconfirmed crossings are logged as `D orb unconfirmed`.
-- **Possible future backup stop at Toss:** regular hours only (10:00–15:55), far away (about −10%),
-  only while a breakout position is open, so it fires only if the bot is down and the market
-  really falls.
+- **Backup stop at Toss:** regular hours only, about 10% below entry, only while a breakout position
+  is open (see "Safety nets").
 
 ## Fastest realistic path from $12.4k to $100k (`trader/research/goal.py`)
 

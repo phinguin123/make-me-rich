@@ -336,6 +336,25 @@ VWAP bug fix, had suggested 07:00 ET. On the book (3 slots, QQQ filter), by star
 - Edge-monitor expectation: +0.96% per trade, about 119 trades a year.
 
 **Tested and rejected:**
+- **Waiting for confirmation after the open** (2026-10-14, `research/open_reversal.py`). Families tested:
+  bounce off the low, winning back part of the drop, reclaiming the open or VWAP, opening-range
+  reversal, fixed waits (09:35–10:00), and the first pullback after an opening rally.
+  - 3,372 variants on the 14 names, picked on 2021–23 and judged on 2024–26. Only 1% are positive after
+    costs, and the in-sample rank barely predicts the out-of-sample one (rank correlation +0.12).
+  - In-sample winners lost out of sample. For example, "buy at 09:45 if still 2 dips below the VWAP"
+    went from +0.94% to −0.77%.
+  - Before costs, the pattern is about a coin flip. The ~0.35% round trip at the open (fees plus
+    spread) decides it.
+  - On 2026-10-13, "bounce 1 dip off the low, sell at the pre-market VWAP" made +1.8% (bought 118.82,
+    sold 121.18). On the 306 SOXL days with the same setup it averaged −0.54%.
+  - The engine is on the cautious side: it puts the live breakout at +0.20%/trade against +0.37% in
+    `research/scalp.py`. Adding that back still leaves the typical variant losing.
+  - One pocket held in both halves: an opening-range reversal (5-minute range) after a flush of 2+ dips
+    below the pre-market VWAP, +1.0% to +1.5% per trade. But it's ~15 trades a year (t ≈ 1.5): too
+    thin to trust. Watch list, not traded.
+- **Overnight hold** (buy at 15:55, sell at the next 05:30 pre-market or 09:30 open): −0.07% to −0.19%
+  per trade on the 14 names, with or without trend filters. The overnight drift is smaller than the
+  0.2% round trip.
 - **Buying the flush after the open** (09:30–10:00 ET, e.g. SOXL on 2026-10-13: 118.40 open, 115.84 at
   09:32, 123.90 at 10:15): 0.4σ below the pre-market VWAP or below the open, exits 10:00–15:55, with or
   without stops. About 3,800 trades on the 14 names: −0.2% to −0.7% per trade in every variant, both

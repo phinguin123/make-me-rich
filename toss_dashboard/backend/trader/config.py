@@ -59,6 +59,11 @@ class Settings:
     scalp_force_day: str = field(default_factory=lambda: _env("TRADER_SCALP_FORCE_DAY"))
     # Pre-market edge of the scalp sleeve (SOXL dips below the pre-market VWAP, 07:00-09:25 ET). 0 disables it.
     scalp_pre: bool = field(default_factory=lambda: _env("TRADER_SCALP_PRE", "1") != "0")
+    # Allocation between the scalp and swing sleeves (shares of their combined money; 0/0 = off).
+    # 30/70 is the validated mix (research/allocation_opt.py). The capitals above seed the very first run.
+    alloc_scalp: float = field(default_factory=lambda: _float("TRADER_ALLOC_SCALP", 0.0))
+    alloc_swing: float = field(default_factory=lambda: _float("TRADER_ALLOC_SWING", 0.0))
+    alloc_rebalance: str = field(default_factory=lambda: _env("TRADER_ALLOC_REBALANCE", "yearly").lower())  # yearly | off
 
     # Risk
     risk_per_trade: float = field(default_factory=lambda: _float("TRADER_RISK_PER_TRADE", 0.01))

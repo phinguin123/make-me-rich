@@ -74,6 +74,7 @@ class ScalpSleeve:
         self.busy = False
         self.retry_seconds = 60.0  # Toss unreachable (e.g. IP not yet allowlisted): retry the regime fetch
         self.pre = PremarketDip(self) if settings.scalp_pre else None
+        self.fresh = not self.path.exists()  # never ran: owns no money yet (see allocator)
         self._load()
 
     # ── persistence ───────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import SwingPanel from "./components/SwingPanel";
 import MacroExt from "./components/MacroExt";
 import ScalpPanel from "./components/ScalpPanel";
 import EdgePanel from "./components/EdgePanel";
+import AllocationPanel from "./components/AllocationPanel";
 import { money, num, pct, signClass } from "./format";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -228,6 +229,12 @@ export default function App() {
       {s.scalp?.enabled && (
         <div className="mb-4">
           <ScalpPanel scalp={s.scalp} />
+        </div>
+      )}
+
+      {s.allocation?.enabled && (
+        <div className="mb-4">
+          <AllocationPanel alloc={s.allocation} />
         </div>
       )}
 

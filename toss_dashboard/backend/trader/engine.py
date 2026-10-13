@@ -24,6 +24,7 @@ from .market import MarketData
 from .risk import RiskManager
 from .scanner import Scanner
 from .strategy import Position, Setup, StrategyConfig, arm, hold_overnight, initial_stop, update_trail
+from .allocator import Allocator
 from .alpaca import AlpacaData
 from .alpaca_stream import AlpacaStream
 from .edges import EdgeMonitor, edge_for_tag
@@ -68,6 +69,10 @@ class Engine:
                                   entries_blocked=lambda: self.paused or self.risk.status.halted, monitor=self.edges)
                       if settings.scalp_capital > 0 else None)
         self._scalp_prep_day: date | None = None
+        self.allocator = (Allocator({"scalp": settings.alloc_scalp, "swing": settings.alloc_swing}, self.scalp, self.swing,
+                                    self.broker, DATA_DIR / f"alloc_{self.broker.name}.json", self.log,
+                                    yearly=settings.alloc_rebalance == "yearly")
+                          if self.scalp and self.swing and settings.alloc_scalp + settings.alloc_swing > 0 else None)
         self._swing_prep_day: date | None = None
         self._swing_trade_day: date | None = None
         self.macro_ext: dict = {}
@@ -328,6 +333,8 @@ class Engine:
         if intraday_on and not self.scanned and scan_at <= now < close_ and now.time() < self.cfg.cutoff:
             self.scanned = True
             self._spawn(self._scan(today))
+        if self.allocator:
+            self.allocator.tick(now, open_, self._spawn)
         if open_ <= now < close_:
             if open_ + timedelta(seconds=5) <= now:
                 self._cancel_server_stops_at_open()
@@ -421,8 +428,7 @@ class Engine:
                     px = float(row["lastPrice"])
                     if px > 0:
                         out[row["symbol"]] = px
-                        st = self.market.get(row["symbol"])
-                        st.last, st.last_ts = px, datetime.now(ET)
+                        self.market.on_trade(row["symbol"], px, 0.0, datetime.now(ET))  # ignored if SIP is fresh
             except TossAPIError as exc:
                 self.log(f"price lookup failed: {exc}", logging.WARNING)
         return out
@@ -793,6 +799,7 @@ class Engine:
             "swing": self.swing.snapshot() if self.swing else {"enabled": False},
             "scalp": self.scalp.snapshot() if self.scalp else {"enabled": False},
             "edges": self.edges.snapshot(),
+            "allocation": self.allocator.snapshot() if self.allocator else {"enabled": False},
             "macro_ext": self.macro_ext,
         }
 

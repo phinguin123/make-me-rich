@@ -180,6 +180,8 @@ class SwingSleeve:
         self.last_prices: dict[str, float] = {}
         self.pending: dict[str, dict] = {}  # order id -> {symbol, side, applied} for restart recovery
         self.busy = False
+        self.force_next = False  # after an allocation change: trade to the new budget with tight bands
+        self.fresh = not self.path.exists()  # never ran: owns no money yet (see allocator)
         self._load()
 
     # ── state ─────────────────────────────────────────────────────────────
@@ -190,10 +192,12 @@ class SwingSleeve:
             self.cash, self.realized = float(st.get("cash", self.cash)), float(st.get("realized", 0.0))
             self.last_run, self.model = st.get("last_run", ""), st.get("model", {})
             self.pending = st.get("pending", {})
+            self.force_next = bool(st.get("force_next", False))
 
     def save(self) -> None:
         st = {"holdings": self.holdings, "cost": self.cost, "cash": self.cash, "realized": self.realized,
-              "last_run": self.last_run, "model": self.model, "pending": self.pending, "saved": datetime.now(ET).isoformat()}
+              "last_run": self.last_run, "model": self.model, "pending": self.pending, "force_next": self.force_next,
+              "saved": datetime.now(ET).isoformat()}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(st, indent=2, default=str))
         tmp.replace(self.path)
@@ -231,6 +235,7 @@ class SwingSleeve:
             symbols = sorted(set(targets) | set(self.holdings))
             self.last_prices.update(await self.prices(symbols))
             total = self.value()
+            band = 0.05 if self.force_next else 0.3  # tight once after the allocator changed the budget
             sells, buys = [], []
             for s in symbols:
                 px = self.last_prices.get(s)
@@ -240,9 +245,9 @@ class SwingSleeve:
                 want = targets.get(s, 0.0) * total
                 if want <= 0 and have > 0:
                     sells.append((s, self.holdings[s]))
-                elif want > 0 and have > want * 1.3 and have - want >= MIN_TRADE:
+                elif want > 0 and have > want * (1 + band) and have - want >= MIN_TRADE:
                     sells.append((s, (have - want) / px))
-                elif want > 0 and have < want * 0.7 and want - have >= MIN_TRADE:
+                elif want > 0 and have < want * (1 - band) and want - have >= MIN_TRADE:
                     buys.append((s, want - have))
             if not sells and not buys:
                 self.log("Swing: book already matches the model — no trades", logging.INFO)
@@ -263,6 +268,7 @@ class SwingSleeve:
             for oid in [k for k, v in self.pending.items() if self.broker.orders.get(k) and self.broker.orders[k].done]:
                 self.pending.pop(oid, None)
             self.last_run = today.isoformat()
+            self.force_next = False
             self.save()
         finally:
             self.busy = False

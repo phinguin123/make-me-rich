@@ -290,6 +290,23 @@ scalp trade, as a share of the account.
 | Swing's average halved | 45% | 0.97 (best 1.00) |
 | Both halved | 20–25% | 0.65 (best 0.65) |
 
+**Live since 2026-10-13: 30% scalp / 70% swing**, set in `.env` (`TRADER_ALLOC_SCALP=0.30`,
+`TRADER_ALLOC_SWING=0.70`, `TRADER_SCALP_POSITION_FRAC=1.0`). The allocator (`trader/allocator.py`)
+moves cash between the two sleeves' ledgers; it never trades by itself.
+
+**When it rebalances:**
+- **Targets changed:** as soon as both sleeves are safe.
+- **Yearly:** on the first trading day of each year from 09:26 ET. That's after the pre-market
+  trade closes and before swing's rebalance at open + 6 min. If the sleeves aren't safe then, it
+  runs later.
+
+**Rules:**
+- "Safe" means scalp holds nothing and has no orders working, and swing isn't trading.
+- Only money a sleeve actually owns is counted. A sleeve that has never run counts as zero, so
+  turning one on can't double-count the account.
+- On a live account, the total is also capped at cash plus swing holdings.
+- After a change, swing trades to its new budget with ±5% bands, once (normally ±30%).
+
 **Choice: about 30% scalp / 70% swing.** It's within 0.08 Sharpe of the best in every scenario.
 50/50 falls to 0.85 if scalp's edge halves.
 

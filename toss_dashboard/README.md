@@ -259,6 +259,40 @@ bot. Idle cash earns nothing.
 **Caveats:** swing's history starts in 2019 (tuned on 2019–22, tested on 2023–26), and 2024's
 +62% came from the AI rally. The breakout edge is noisy (t ≈ 1.6).
 
+### Optimal ratio (`trader/research/allocation_opt.py`)
+
+All mixes are fully invested and rebalanced each January. The scalp share is also the size of each
+scalp trade, as a share of the account.
+
+| Scalp / swing | CAGR | After tax | Sharpe | Max DD | Bad year (1y 5th pct) | 3 yrs median | 3 yrs bad case |
+|---|---|---|---|---|---|---|---|
+| 0 / 100 | +24.4% | +22.0% | 1.14 | −19.9% | −6.3% | +92% | +16% |
+| 20 / 80 | +27.2% | +24.4% | 1.39 | −16.9% | −0.6% | +112% | +32% |
+| **30 / 70** | **+28.5%** | **+25.5%** | **1.39** | **−16.6%** | **−0.6%** | **+118%** | **+34%** |
+| 50 / 50 | +30.9% | +27.6% | 1.25 | −20.0% | −3.6% | +130% | +30% |
+| 70 / 30 | +33.0% | +29.5% | 1.09 | −24.2% | −9.2% | +138% | +16% |
+| 100 / 0 | +35.8% | +31.9% | 0.93 | −32.8% | −23.3% | +148% | −14% |
+
+**Where each objective lands:**
+- Mean-variance theory: 29% scalp.
+- Best Sharpe on the history: 25%.
+- Best 3-year bad case (5th percentile): 35%.
+- Re-optimized on 2,000 bootstrap paths: the best Sharpe lands on a median of 25% (middle half
+  20–35%).
+- Max growth: 100% scalp, but it's unstable. Across paths it flips between 0% and 100%, because it
+  depends on scalp's uncertain average.
+
+**If the live edges are weaker than the backtest:**
+
+| Live result | Best scalp share | 30% scalp gives |
+|---|---|---|
+| Scalp's average halved | 15–20% | Sharpe 1.09 (best 1.17) |
+| Swing's average halved | 45% | 0.97 (best 1.00) |
+| Both halved | 20–25% | 0.65 (best 0.65) |
+
+**Choice: about 30% scalp / 70% swing.** It's within 0.08 Sharpe of the best in every scenario.
+50/50 falls to 0.85 if scalp's edge halves.
+
 ## Leveraged-ETF trend rules (research only, `trader/research/lev_trend.py`)
 
 The rule: hold TQQQ or SOXL only while the index is above its 200-day average, otherwise

@@ -230,8 +230,8 @@ Toss bars since Nov 2025. The day market used Toss bars since Nov 2025 and Samsu
 
 **Rules:**
 - The dip size is 0.4 × SOXL's 20-day daily volatility, kept between 1.5% and 6% (about 3% in 2026).
-- From 07:00 to 09:00 ET, when SOXL trades that far below its pre-market VWAP, the sleeve places
-  a limit buy at that level. The order rests for up to 10 minutes. The sleeve never chases.
+- From 04:30 to 09:00 ET (17:30–22:00 KST; 07:00 until 2026-10-13), when SOXL trades that far
+  below its pre-market VWAP, the sleeve places a limit buy at that level. The order rests for up to 10 minutes. The sleeve never chases.
 - A resting take-profit sells at entry + dip. Otherwise the position is sold at 09:25 ET with
   limit orders. If that fails, it's sold at market after the open.
 - One trade a day, 50% of the sleeve. It trades in uptrends and downtrends alike.

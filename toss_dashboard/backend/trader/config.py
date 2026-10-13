@@ -64,6 +64,8 @@ class Settings:
     alloc_scalp: float = field(default_factory=lambda: _float("TRADER_ALLOC_SCALP", 0.0))
     alloc_swing: float = field(default_factory=lambda: _float("TRADER_ALLOC_SWING", 0.0))
     alloc_rebalance: str = field(default_factory=lambda: _env("TRADER_ALLOC_REBALANCE", "yearly").lower())  # yearly | off
+    # Account drawdown breaker: pause new entries when scalp + swing + reserve is this far below its peak (0 = off)
+    account_dd_halt: float = field(default_factory=lambda: _float("TRADER_ACCOUNT_DD_HALT", 0.20))
 
     # Risk
     risk_per_trade: float = field(default_factory=lambda: _float("TRADER_RISK_PER_TRADE", 0.01))

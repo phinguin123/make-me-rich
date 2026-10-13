@@ -71,7 +71,8 @@ class Engine:
         self._scalp_prep_day: date | None = None
         self.allocator = (Allocator({"scalp": settings.alloc_scalp, "swing": settings.alloc_swing}, self.scalp, self.swing,
                                     self.broker, DATA_DIR / f"alloc_{self.broker.name}.json", self.log,
-                                    yearly=settings.alloc_rebalance == "yearly")
+                                    yearly=settings.alloc_rebalance == "yearly", halt_dd=settings.account_dd_halt,
+                                    on_breach=self._on_breach, is_paused=lambda: self.paused)
                           if self.scalp and self.swing and settings.alloc_scalp + settings.alloc_swing > 0 else None)
         self._swing_prep_day: date | None = None
         self._swing_trade_day: date | None = None
@@ -261,6 +262,10 @@ class Engine:
         except TossAPIError as exc:
             self._warn(f"Toss account check failed: {exc}")
 
+    def _on_breach(self, msg: str) -> None:
+        self.paused = True
+        self._warn(msg)
+
     def _warn(self, msg: str) -> None:
         if msg not in self.warnings:
             self.warnings.append(msg)
@@ -346,7 +351,7 @@ class Engine:
             elif (self._swing_trade_day != today and self.swing.model.get("for_day") == today.isoformat()
                   and open_ + timedelta(minutes=6) <= now < close_ - timedelta(minutes=70)):
                 self._swing_trade_day = today
-                self._spawn(self.swing.rebalance(today, self._swing_cash, self.risk.allow_order))
+                self._spawn(self.swing.rebalance(today, self._swing_cash, self.risk.allow_order, buys_allowed=lambda: not self.paused))
         if self.scalp:
             if self._scalp_prep_day != today and open_ - timedelta(minutes=60) <= now < close_:
                 self._scalp_prep_day = today

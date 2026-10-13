@@ -93,3 +93,77 @@ def test_swing_uses_tight_bands_once_after_allocation(tmp_path):
     asyncio.run(swing.rebalance(today, cash, lambda urgent: True))
     assert bought and bought[0][0] == "AAA" and bought[0][1] == pytest.approx(1500.0 * 0.995, rel=0.01)
     assert not swing.force_next  # back to normal bands afterwards
+
+
+def test_reserve_is_kept_and_counted_next_time(tmp_path):
+    alloc, scalp, swing = make(tmp_path)
+    alloc.targets = {"scalp": 0.25, "swing": 0.60}
+    tick(alloc, datetime(2026, 10, 13, 1, 0, tzinfo=ET))
+    assert scalp.cash == pytest.approx(3100.0) and swing.cash == pytest.approx(7440.0)
+    assert alloc.state["reserve"] == pytest.approx(1860.0)
+    scalp.cash = 3500.0  # scalp gained $400
+    tick(alloc, datetime(2027, 1, 4, 9, 30, tzinfo=ET))  # yearly: total = 3,500 + 7,440 + 1,860 = 12,800
+    assert scalp.cash == pytest.approx(3200.0) and swing.value() == pytest.approx(7680.0)
+    assert alloc.state["reserve"] == pytest.approx(1920.0)
+
+
+def test_drawdown_breaker_pauses_and_resume_rebaselines(tmp_path):
+    alloc, scalp, swing = make(tmp_path)
+    paused = {"on": False}
+    alerts = []
+    alloc.halt_dd, alloc.is_paused = 0.20, lambda: paused["on"]
+    alloc.on_breach = lambda msg: (alerts.append(msg), paused.update(on=True))
+    tick(alloc, datetime(2026, 10, 13, 1, 0, tzinfo=ET))  # allocate: total 12,400 = high-water mark
+    scalp.cash = 3720.0 - 2600.0  # bot money falls to 9,800: -21%
+    tick(alloc, datetime(2026, 10, 14, 1, 0, tzinfo=ET))
+    assert paused["on"] and alerts and alloc.state["breached"]
+    tick(alloc, datetime(2026, 10, 14, 1, 1, tzinfo=ET))
+    assert len(alerts) == 1  # one alert, not one per tick
+    paused["on"] = False  # the user pressed Resume
+    tick(alloc, datetime(2026, 10, 14, 1, 2, tzinfo=ET))
+    assert not alloc.state["breached"] and alloc.state["hwm"] == pytest.approx(9800.0)
+
+
+def test_swing_skips_buys_while_paused(tmp_path):
+    alloc, scalp, swing = make(tmp_path, swing_fresh=False)
+    today = date(2027, 1, 4)
+    swing.model = {"for_day": today.isoformat(), "weights": {"AAA": 0.5}}
+    calls = []
+
+    async def submit_amount(symbol, amount, tag):
+        calls.append(symbol)
+
+    swing.broker.submit_amount = submit_amount
+
+    async def cash():
+        return 100000.0
+
+    asyncio.run(swing.rebalance(today, cash, lambda urgent: True, buys_allowed=lambda: False))
+    assert calls == []
+
+
+def test_waits_instead_of_shrinking_when_cash_is_used_outside_the_bot(tmp_path):
+    alloc, scalp, swing = make(tmp_path, swing_fresh=False)
+    alloc.state = {"targets": {"scalp": 0.3, "swing": 0.7}, "last": "2026-10-13", "history": [], "reserve": 0.0, "hwm": 12400.0, "breached": False}
+    alloc.targets = {"scalp": 0.25, "swing": 0.60}
+    scalp.cash, swing.cash = 3720.0, 8680.0
+
+    class LiveBroker:  # the user bought something else with the cash: only $22 free
+        name = "live"
+        free = 21.94
+
+        def open_orders(self):
+            return []
+
+        async def cash(self):
+            return self.free
+
+    alloc.broker = LiveBroker()
+    tick(alloc, datetime(2026, 10, 13, 2, 0, tzinfo=ET))
+    assert scalp.cash == 3720.0 and swing.cash == 8680.0  # books untouched
+    assert "waiting" in alloc.note and not alloc.state["breached"]
+    alloc.broker.free = 12400.0  # the user sold; cash is back
+    tick(alloc, datetime(2026, 10, 13, 2, 3, tzinfo=ET))  # still inside the 5-minute back-off
+    assert scalp.cash == 3720.0
+    tick(alloc, datetime(2026, 10, 13, 2, 6, tzinfo=ET))
+    assert scalp.cash == pytest.approx(3100.0) and swing.cash == pytest.approx(7440.0) and alloc.state["reserve"] == pytest.approx(1860.0)

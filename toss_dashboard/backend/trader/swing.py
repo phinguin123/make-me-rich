@@ -225,7 +225,8 @@ class SwingSleeve:
         self.log(f"Swing model ({self.model['as_of']}): {len(weights)} names, exposure {self.model['exposure']:.0%}"
                  f"{', SOXS hedge ON' if self.model['hedge_on'] else ''}; rebalance day: {self.model['rebalance_day']}", logging.INFO)
 
-    async def rebalance(self, today: date, broker_cash: Callable[[], "asyncio.Future"], allow_order: Callable[[bool], bool]) -> None:
+    async def rebalance(self, today: date, broker_cash: Callable[[], "asyncio.Future"], allow_order: Callable[[bool], bool],
+                        buys_allowed: Callable[[], bool] = lambda: True) -> None:
         """Bring the sleeve to the model's weights (sells first, then amount-based buys)."""
         if self.busy or self.model.get("for_day") != today.isoformat():
             return
@@ -257,6 +258,9 @@ class SwingSleeve:
             if sells:
                 await asyncio.sleep(5)
                 await self.broker.sync()
+            if buys and not buys_allowed():
+                self.log(f"Swing: {len(buys)} buys skipped (new entries paused)", logging.WARNING)
+                buys = []
             for s, amount in sorted(buys, key=lambda x: -x[1]):
                 avail = min(self.cash, await broker_cash()) * 0.995
                 amount = min(amount, avail)

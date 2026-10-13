@@ -13,12 +13,20 @@ When it runs:
 "Safe" = the scalp sleeve holds nothing and has no orders working, and the swing sleeve isn't
 trading. Only money a sleeve actually owns is counted: a sleeve that has never run (no state
 file) counts as zero, so turning on a new sleeve can't double-count the account.
+
+Targets that sum to less than 100% leave a cash reserve the bot never trades (tracked here so
+it stays part of the total at the next rebalance).
+
+Drawdown circuit breaker: if scalp + swing + reserve falls `halt_dd` below its high-water mark,
+new entries are paused (scalp entries and swing buys; exits and swing sells still run) and a
+warning is raised. Pressing Resume on the dashboard acknowledges it and resets the high-water
+mark to the current value.
 """
 from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -28,14 +36,18 @@ ET = ZoneInfo("America/New_York")
 
 class Allocator:
     def __init__(self, targets: dict[str, float], scalp, swing, broker, path: Path, log: Callable[[str, int], None],
-                 yearly: bool = True):
+                 yearly: bool = True, halt_dd: float = 0.0, on_breach: Callable[[str], None] | None = None,
+                 is_paused: Callable[[], bool] = lambda: False):
         self.targets = {k: round(float(v), 4) for k, v in targets.items()}
         self.scalp, self.swing, self.broker, self.path, self.log, self.yearly = scalp, swing, broker, path, log, yearly
-        self.state: dict = {"targets": {}, "last": "", "history": []}
+        self.halt_dd, self.on_breach, self.is_paused = halt_dd, on_breach, is_paused
+        self.state: dict = {"targets": {}, "last": "", "history": [], "reserve": 0.0, "hwm": 0.0, "breached": False}
         if path.exists():
-            self.state = json.loads(path.read_text())
+            self.state.update(json.loads(path.read_text()))
         self.busy = False
         self.note = ""
+        self._px_at: datetime | None = None  # last swing price refresh (the breaker needs current values)
+        self._retry_at: datetime | None = None  # after a postponed rebalance
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
@@ -64,12 +76,45 @@ class Allocator:
             return "orders working"
         return ""
 
+    def total(self) -> float:
+        return self.scalp.equity() + self.swing.value() + float(self.state.get("reserve", 0.0))
+
+    def check_drawdown(self) -> None:
+        if not self.halt_dd or not self.state.get("last"):
+            return
+        total = self.total()
+        if self.state.get("breached"):
+            if not self.is_paused():  # the user pressed Resume: accept the loss, start a new high-water mark
+                self.state.update(breached=False, hwm=total)
+                self.log(f"Drawdown breaker reset by Resume; new high-water mark ${total:,.2f}", logging.WARNING)
+                self.save()
+            return
+        if total > self.state.get("hwm", 0.0):
+            self.state["hwm"] = total
+            return
+        hwm = self.state["hwm"]
+        if hwm and total < hwm * (1 - self.halt_dd):
+            self.state["breached"] = True
+            self.save()
+            msg = (f"Account drawdown breaker: bot money ${total:,.0f} is {total / hwm - 1:.1%} below its high of ${hwm:,.0f} "
+                   f"(limit {self.halt_dd:.0%}). New entries paused; exits still run. Review, then press Resume.")
+            self.log(msg, logging.ERROR)
+            if self.on_breach:
+                self.on_breach(msg)
+
     def tick(self, now: datetime, regular_open: datetime, spawn: Callable) -> None:
         if self.busy:
             return
+        if (self.swing.holdings and regular_open <= now <= regular_open + timedelta(hours=6, minutes=35)
+                and (self._px_at is None or (now - self._px_at).total_seconds() >= 900)):
+            self._px_at = now
+            spawn(self._refresh_prices())
+        self.check_drawdown()
         reason = self.due(now.date())
         if not reason:
             self.note = ""
+            return
+        if self._retry_at and now < self._retry_at:
             return
         if reason == "yearly" and now.time() < time(9, 26):
             self.note = "yearly rebalance due today at 09:26 ET"
@@ -80,6 +125,12 @@ class Allocator:
             return
         self.busy = True
         spawn(self._guard(self.run(now, reason)))
+
+    async def _refresh_prices(self) -> None:
+        try:
+            self.swing.last_prices.update(await self.swing.prices(sorted(self.swing.holdings)))
+        except Exception as exc:  # noqa: BLE001 — cosmetic for one cycle; retried in 15 minutes
+            self.log(f"Allocator: swing price refresh failed ({exc!r})", logging.WARNING)
 
     async def _guard(self, coro) -> None:
         try:
@@ -96,17 +147,25 @@ class Allocator:
             sw.last_prices.update(await sw.prices(sorted(sw.holdings)))
         if self.safe():  # re-check after the await
             return
-        owned = {"scalp": 0.0 if sc.fresh else sc.equity(), "swing": 0.0 if sw.fresh else sw.value()}
+        owned = {"scalp": 0.0 if sc.fresh else sc.equity(), "swing": 0.0 if sw.fresh else sw.value(),
+                 "reserve": float(self.state.get("reserve", 0.0))}
         total = sum(owned.values())
         if total <= 0:  # very first run of both sleeves: start from the configured pots
             total = sc.cash + sw.cash
-        try:  # never allocate more than the account can actually pay for
+        try:  # the account must actually hold the money the sleeves own
             ceiling = await self.broker.cash() + sum(q * sw.last_prices.get(s, 0.0) for s, q in sw.holdings.items())
-            if self.broker.name == "live" and total > ceiling * 1.01:
-                self.log(f"Allocator: sleeves claim ${total:,.0f} but the account has ${ceiling:,.0f}; using the account value", logging.WARNING)
-                total = ceiling
-        except Exception:  # noqa: BLE001 — keep the ledger total
-            pass
+        except Exception:  # noqa: BLE001 — can't check now; try again later
+            ceiling = None
+        if self.broker.name == "live" and (ceiling is None or total > ceiling * 1.01):
+            # Money in use outside the bot (e.g. a manual trade). Never shrink the sleeves' books for that:
+            # wait until the cash is back. The sleeves cap every order by real buying power meanwhile.
+            msg = (f"{reason}: waiting, the bot owns ${total:,.0f} but only ${ceiling or 0:,.0f} is free in the account "
+                   "(money in use outside the bot)")
+            if self.note != msg:
+                self.log(f"Allocator {msg}", logging.WARNING)
+            self.note = msg
+            self._retry_at = now + timedelta(minutes=5)
+            return
         tgt_scalp = round(total * self.targets.get("scalp", 0.0), 2)
         tgt_swing = round(total * self.targets.get("swing", 0.0), 2)
         before = (sc.cash, owned["swing"])
@@ -120,22 +179,29 @@ class Allocator:
         sc.save()
         sw.save()
         entry = {"date": now.date().isoformat(), "reason": reason, "total": round(total, 2),
-                 "scalp": tgt_scalp, "swing": tgt_swing, "targets": self.targets}
+                 "scalp": tgt_scalp, "swing": tgt_swing, "reserve": round(total - tgt_scalp - tgt_swing, 2), "targets": self.targets}
         self.state["targets"], self.state["last"] = dict(self.targets), now.date().isoformat()
+        self.state["reserve"] = round(total - tgt_scalp - tgt_swing, 2)
+        self.state["hwm"] = max(float(self.state.get("hwm", 0.0)), total)
         self.state.setdefault("history", []).append(entry)
         self.save()
         self.note = ""
         self.log(f"Allocator ({reason}): ${total:,.2f} -> scalp ${tgt_scalp:,.2f} ({self.targets.get('scalp', 0):.0%}) / "
-                 f"swing ${tgt_swing:,.2f} ({self.targets.get('swing', 0):.0%}); was scalp ${before[0]:,.2f}, "
+                 f"swing ${tgt_swing:,.2f} ({self.targets.get('swing', 0):.0%}) / reserve ${self.state['reserve']:,.2f}; was scalp ${before[0]:,.2f}, "
                  f"swing ${before[1]:,.2f}", logging.INFO)
 
     def snapshot(self) -> dict:
         sc_val = self.scalp.equity()
         sw_val = self.swing.value()
-        total = sc_val + sw_val
+        reserve = float(self.state.get("reserve", 0.0))
+        total = sc_val + sw_val + reserve
+        hwm = float(self.state.get("hwm", 0.0))
         last = self.state.get("last") or ""
         return {"enabled": True, "targets": self.targets, "last": last,
                 "next": f"first trading day of {int(last[:4]) + 1}" if last and self.yearly else "",
-                "current": {"scalp": sc_val, "swing": sw_val, "total": total,
-                            "scalp_share": sc_val / total if total else 0.0, "swing_share": sw_val / total if total else 0.0},
+                "current": {"scalp": sc_val, "swing": sw_val, "reserve": reserve, "total": total,
+                            "scalp_share": sc_val / total if total else 0.0, "swing_share": sw_val / total if total else 0.0,
+                            "reserve_share": reserve / total if total else 0.0},
+                "breaker": {"limit": self.halt_dd, "hwm": hwm, "drawdown": total / hwm - 1 if hwm else 0.0,
+                            "breached": bool(self.state.get("breached"))},
                 "note": self.note, "history": self.state.get("history", [])[-10:]}

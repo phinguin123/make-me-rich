@@ -1,12 +1,37 @@
 # Toss Auto Trader
 
 Fully automatic US-stock trader for a Toss Securities account, with a live dashboard.
-One process runs the engine, the REST/WebSocket API and the UI. It runs two sleeves:
+One process runs the engine, the REST/WebSocket API and the UI.
 
-| Sleeve | Capital | Holding period | Backtest (all Toss costs) |
+### What runs live (since 2026-10-13): survival first
+
+| Money | Strategy | When (KST, US summer time) | Holds |
 |---|---|---|---|
-| **Swing: monthly momentum + volatility targeting** | `TRADER_SWING_CAPITAL` (3,500) | weeks to months | 2019 – Oct 2026: **+24.5%/yr**, Sharpe 1.12, max DD **−20%**, positive every year incl. 2022 (+15%) |
-| **Intraday: stocks-in-play breakout, safe profile** | `TRADER_CAPITAL` (1,500) | minutes to overnight | 2024 – Oct 2026: +26%/yr, max DD −4.8% (not tested in a bear market) |
+| **25% scalp** | Pre-market SOXL dip (below) | buys 20:00–22:00, out by 22:25 | minutes to 2 hours |
+| (same pot) | Opening-range breakout SOXL/SOXS, semis downtrends only | range 22:30–23:00, entries to 00:30, out by 04:57 | minutes to hours, never overnight |
+| **60% swing** | Monthly momentum, 10 stocks, 20% volatility target | trades 22:36 on rebalance days | weeks to months |
+| **15% reserve** | Cash, never traded | — | — |
+
+Backtest of this mix (2021-01 to 2026-10, Toss costs, rebalanced yearly):
+- **Returns:** +24.3%/yr (+21.8% after Korean tax), Sharpe 1.39.
+- **Drawdown:** −14.6% at worst, and every calendar year was positive.
+- **Bad cases:** a 1-in-20 bad year is −1%. In a crash replay (SOXL sleeves' worst year since
+  1995, swing −30%, scalp −15% at once) the account loses about 22%.
+
+**Safety layers:**
+- **Never overnight:** scalp positions always close the same day.
+- **Regime filter:** the breakout trades only in semis downtrends, where it has an edge.
+- **Stops and timed exits:** the breakout has a stop and a forced exit; the pre-market dip has
+  a take-profit and a forced exit.
+- **Edge monitor:** cuts an edge's size in half or switches it off when live trades fall clearly
+  below the backtest.
+- **Drawdown breaker:** at −20% from the peak, new entries pause; exits and swing sells still run.
+- **Cash reserve:** 15% is never traded.
+- **Volatility target:** swing holds less when markets get wild.
+- **Your own holdings:** the bot never touches them.
+
+Other sleeves (off): intraday stocks-in-play breakout (`TRADER_CAPITAL`, 2024 – Oct 2026 +26%/yr,
+max DD −4.8%, not tested in a bear market).
 
 The order path was verified live on the Toss account (create, modify and cancel, plus
 WebSocket fill events). Amount-based and fractional orders were also validated against
@@ -219,6 +244,42 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 0.086% (I had assumed 0.10%). At those costs, the best idea (Korean semis leading SOXL)
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
+
+## Survival-first allocation (`trader/research/allocation3.py`)
+
+**Candidates:**
+- Scalp (intraday SOXL/SOXS).
+- SOXL dip-buy.
+- SOXL trend with a volatility target.
+- Swing.
+- Cash.
+
+3,286 mixes were tested on the same days (2021-01 to 2026-10, rebalanced yearly).
+
+**Survival rules (all three must pass):**
+1. Max drawdown no worse than −20%.
+2. A 1-in-20 bad year (bootstrap) no worse than −10%.
+3. Crash replay no worse than −25%. The replay takes the SOXL sleeves' worst 12 months since 1995
+   (dip-buy −68%, trend −46%) and assumes swing −30% and scalp −15% in the same year.
+
+The mixes that passed and also held up when the crash assumptions moved (swing −20 to −40%,
+scalp −10 to −25%) all look alike: about 25–30% scalp, 50–60% swing and a 15–20% cash reserve.
+The SOXL multi-day sleeves appear only at 0–10%.
+
+| Mix (scalp / dip / swing / cash) | CAGR | Sharpe | Max DD | 1y bad case | Crash replay | Severe replay |
+|---|---|---|---|---|---|---|
+| 30 / 0 / 70 / 0 (previous) | +28.5% | 1.39 | −16.6% | −1.2% | −25.5% | −35.5% |
+| **25 / 0 / 60 / 15 (live)** | **+24.3%** | **1.39** | **−14.6%** | **−1.0%** | **−21.8%** | **−30.3%** |
+| 25 / 5 / 55 / 15 | +25.2% | 1.45 | −13.9% | +0.6% | −23.7% | −31.6% |
+| 50 / 5 / 45 / 0 (most growth that still passes) | +31.9% | 1.29 | −19.7% | −3.2% | −24.4% | — |
+
+**Why the live mix:**
+- Compared with 30/70, it gives up about 4 points a year. In return the worst drop is 2 points
+  smaller, a crash costs 4–5 points less, and $1,860 stays in cash.
+- It has the same Sharpe as 30/70.
+- **The SOXL dip-buy is left out.** At a size the account can survive, it adds about +0.9
+  points a year (about $110 on this account). It would add a new overnight SOXL exposure in the
+  middle of a semis correction, and its long-history worst stretch is −78% (2000–02).
 
 ## SOXL vs SOXL + SOXS over days, and what follows crashes (`trader/research/soxl_soxs.py`)
 

@@ -220,6 +220,61 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
+## SOXL vs SOXL + SOXS over days, and what follows crashes (`trader/research/soxl_soxs.py`)
+
+**Data and costs:**
+- History is ^SOX since 1994, with synthetic +3x and −3x daily returns (correlation 0.996 and
+  0.998 with the real SOXL and SOXS since 2010), plus the real ETFs.
+- Costs are 0.15% per side; cash earns T-bills.
+- Signals are taken on the close and traded at that close (MOC) unless noted.
+
+**SOXS loses money held for days.** Buy-and-hold lost 71.5% a year (decay plus semis' upward
+drift). After every kind of crash, SOXS's 20-day median was negative and it rose only 12–30% of
+the time, even in bear markets.
+
+| Trend rule | 1995–2026 | 2013–2026 | Real ETFs since 2010 |
+|---|---|---|---|
+| SOXL above 200d, else cash | +15.2% | +38.3% | — |
+| SOXL above 200d, else SOXS | −32.5% | −12.4% | — |
+| + vol target, SOXL / cash | +18.3% | +30.6% | +23.5% |
+| + vol target, SOXL / SOXS | +9.0% | +17.0% | +9.4% |
+
+**Shorting rallies with SOXS doesn't hold up:**
+- "Dead-cat fade" (buy SOXS after a +15% bounce in a bear market): −9.8% per trade, 27% wins.
+- RSI2 > 90 rally fade in downtrends: +20% CAGR in 1995–2012, but −2.4% in 2013–2026.
+
+**Where SOXS does work: intraday, in semis downtrends** (the live breakout). Its SOXS legs
+average +0.29% per trade and its SOXL legs +0.37%. In uptrends both lose (SOXS legs −0.44%,
+t −2.4), so the regime filter stays.
+
+**Crashes and dead cats:**
+- After SOX first falls 30% below its 1-year high: SOXL's 10-day median is +9.4% (up 70% of the
+  time).
+- After a 40% fall: the 60-day median is −18%.
+- Of 20 crashes of 30%, 8 bounced ≥ 15% within about 20 days of the low. Only 3 of those 8 then
+  made a new low within 6 months.
+
+**The multi-day edge that survives: buy SOXL on dips in uptrends.**
+- Rule: SOX RSI(2) < 10 and SOX above its 200-day average; buy at the close, sell when SOX closes
+  above its 5-day average (10 days at most).
+- Result: 213 trades since 1995, +2.0% average, +3.1% median, 62% wins. The average was +1.6%
+  before 2013 and +2.3% after. Traded at the next close instead, it's +1.7%.
+- Tails: worst trade −47%, and stops only make it worse (+1.0% average with a 15% stop).
+- Added to the vol-targeted SOXL trend rule: 2013–2026 goes from +30.6% to +39.4%, and real ETFs
+  since 2010 from +23.5% to +29.9%. The 1995–2026 max drawdown widens to −84%.
+
+**Oct 12, 2026:** SOX was 16% off its high, down 7% in 5 days, 16% above its 200-day average, RSI2
+at 2. The dip-buy signal was on.
+
+| History of similar setups | 10-day SOXL median | 20-day SOXL median | 20-day SOXS median |
+|---|---|---|---|
+| All 79 | +5.5% (up 59%) | +6.6% (up 63%) | −17% (up 19%) |
+| 19 that came right after a bounce, like now | +2.1% (up 50%) | — | — |
+
+- SOX rose 10% before falling 10% in 47 of 72 resolved cases.
+- By decade, the 20-day SOXL median was +4.5% in the 1990s, −4.5% in the 2000s, +8.6% in the
+  2010s and +16% in the 2020s.
+
 ## Allocation: full scalp vs scalp + swing (`trader/research/allocation.py`)
 
 The sleeves are backtested on the same days, 2021-01 to 2026-10, as separate pots like in the

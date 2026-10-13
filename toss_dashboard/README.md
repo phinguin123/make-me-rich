@@ -202,6 +202,38 @@ filling us, so expect the lower number.
 **The day market is not traded.** Ten hypothesis families failed after costs. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
+## Leveraged-ETF trend rules (research only, `trader/research/lev_trend.py`)
+
+The rule: hold TQQQ or SOXL only while the index is above its 200-day average, otherwise
+T-bills.
+- History before the ETFs uses synthetic 3x daily returns of ^NDX (1986+) and ^SOX (1995+),
+  calibrated to the real ETFs since 2010 (daily correlation 0.996–0.999).
+- Signals are taken on the close and traded at the next close, with 0.15%/side costs.
+
+| Strategy | 1986/95 – 2026 CAGR | Max DD | 2016 – 2026 CAGR | Max DD |
+|---|---|---|---|---|
+| Nasdaq-100 1x buy & hold | +14.4% | −83% | +19.3% | −36% |
+| TQQQ buy & hold | +15.5% | −100% | — | −82% (2010+) |
+| TQQQ, SMA200 | +21.1% | −88% | +38.8% | −57% |
+| **TQQQ, SMA200 + 40% vol target** | **+18.7%** | **−67%** | **+34.0%** | **−38%** |
+| SOX 1x buy & hold | +13.9% | −87% | +31.1% | −47% |
+| SOXL buy & hold | −8.2% | −100% | — | −91% (2010+) |
+| SOXL, SMA200 | +8.9% | −99.7% | +38.5% | −88% |
+| SOXL, SMA200 + 40% vol target | +16.2% | −64% | +33.4% | −53% |
+
+**Findings:**
+- The 200-day filter alone doesn't make 3x safe. TQQQ still lost 83% and SOXL 98% in
+  2000–02, because bear-market rallies kept re-triggering entries.
+- Volatility targeting does most of the risk control. The leveraged position is sized so its
+  volatility stays near 40%, in quarter steps.
+- SOXL results are fragile. CAGR swings from +2% to +20% with small rule changes (100/150/200
+  days, a ±2% band), so none of them is trustworthy.
+- TQQQ with SMA200 and a 40% volatility target is the defensible version. It beat the
+  Nasdaq-100 over 40 years with a smaller worst drawdown, but that drawdown was still −67%.
+- It's worse risk-adjusted than the swing momentum sleeve: Sharpe 0.93 and −38% DD in
+  2016–2026, against the swing sleeve's 1.12 and −20% in 2019–2026. The swing sleeve's
+  history is shorter, though.
+
 ## Edge health monitor (`trader/edges.py`)
 
 Each live edge's closed trades are compared with its backtest, and the edge is sized down or

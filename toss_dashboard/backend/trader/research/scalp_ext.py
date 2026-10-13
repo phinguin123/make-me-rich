@@ -260,8 +260,12 @@ def _dip_trade(c, lo, hi, vol, start, kk, model, e0=180, e1=300, exit_i=325, thr
     """One pre-market dip trade. model: level (filled at the level on a 0.3% trade-through),
     reactive (bar close if still below, else rest 10 min needing a close below), pessimistic
     (filled only when a bar closes below the level, at the level)."""
-    pv = np.cumsum(((hi + lo + c) / 3)[start:exit_i + 1] * vol[start:exit_i + 1])
-    vv = np.cumsum(vol[start:exit_i + 1])
+    typ = (hi + lo + c) / 3
+    # minutes without a bar count as zero volume (a NaN here used to blank the VWAP for the rest of the day
+    # and silently skip that day; the live bot skips empty minutes, so research must too)
+    pvol = np.where(np.isfinite(typ) & np.isfinite(vol), typ * vol, 0.0)[start:exit_i + 1]
+    pv = np.cumsum(pvol)
+    vv = np.cumsum(np.nan_to_num(vol[start:exit_i + 1]))
     vwap = np.where(vv > 0, pv / np.maximum(vv, 1), np.nan)
     j = max(start + 30, e0)
     while j < e1:

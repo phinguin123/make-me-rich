@@ -16,13 +16,13 @@
     "scalp-pre": {
       "label": "Pre-market SOXL dip below VWAP",
       "source": "research/scalp_ext.py P5 pessimistic",
-      "mean": 0.01021,
-      "std": 0.02126,
-      "n": 52,
-      "per_year": 12.9,
-      "dd_reduce": -0.0831,
-      "dd_off": -0.1324,
-      "period": "2022-09 .. 2026-10",
+      "mean": 0.00352,
+      "std": 0.02499,
+      "n": 123,
+      "per_year": 21.9,
+      "dd_reduce": -0.1745,
+      "dd_off": -0.2863,
+      "period": "2021-02 .. 2026-10",
       "slip_model": 0.0
     }
   }

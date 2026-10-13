@@ -9,7 +9,7 @@ The bot's money moves to a safer mix as it grows, one way only (`TRADER_ALLOC_PH
 
 | Phase | Bot money | Scalp (SOXL/SOXS, intraday) | Swing (momentum) | Cash reserve | Backtest |
 |---|---|---|---|---|---|
-| **1. Growth (now)** | under $50k | 50% | 50% | — | +30.9%/yr, max DD −20%, bad year −4.8% |
+| **1. Growth (now)** | under $50k | 50% | 50% | — | +29.4%/yr, max DD −29%, bad year −5.8% (corrected, see below) |
 | 2. Build | $50k–$100k | 30% | 70% | — | +28.5%/yr, max DD −17% |
 | 3. Keep | over $100k | 20% | 50% | 30% | +20.0%/yr, max DD −12% |
 
@@ -216,7 +216,7 @@ Toss bars since Nov 2025. The day market used Toss bars since Nov 2025 and Samsu
 | 08:30 ET (CPI/jobs) move continuing to the open | −0.25%/trade: these moves reverse |
 | Pre-market trend into 09:00 continuing to the open | ~0 gross |
 | Day-market move → pre-market follow | +0.58%, t 2.0, but negative in the first half |
-| **SOXL dip ≥ 0.4 × 20-day vol below pre-market VWAP, 07:00–09:00, limit buy** | **+1.02 to +1.50%/trade, t 3.5–7.6, ~10–15/yr** |
+| **SOXL dip ≥ 0.4 × 20-day vol below pre-market VWAP, 07:00–09:00, limit buy** | **+0.35 to +1.05%/trade, t 1.6–6.7, ~22/yr (corrected)** |
 | Day market: Korean semis lead SOXL (session, 5- and 15-minute) | gross +0.04 to +0.3%, net negative |
 | Day market: SOXL catch-up after the KRX close | −0.38%/trade |
 | Day market: VWAP-reversion limit orders | −0.2 to −0.8%/trade |
@@ -232,8 +232,18 @@ Toss bars since Nov 2025. The day market used Toss bars since Nov 2025 and Samsu
 - One trade a day, 50% of the sleeve. It trades in uptrends and downtrends alike.
 
 **Results:**
-- +1.50%/trade if every touch fills.
-- +1.02% if we're filled only when a 1-minute bar closes below our price (t 3.5).
+- **Corrected 2026-10-13.** The research VWAP went blank after any minute without a trade, so it
+  silently skipped about half the days. The live bot was never affected. On all 2021–2026 days:
+
+  | Fill rule | Trades | Avg/trade | t |
+  |---|---|---|---|
+  | Filled on a 0.3% trade-through | 198 | +1.05% | 6.7 |
+  | React at the bar close, else rest 10 min (closest to the live bot) | 124 | +0.78% | 4.5 |
+  | Filled only when a bar closes below the level | 123 | +0.35% | 1.6 |
+
+  Under the strictest rule the first half of the sample was negative (−0.17%) and the second half
+  positive (+0.86%). The earlier figures (+1.50%, and +1.02% on 52 trades) came from the subset of
+  days with complete data.
 - Both halves of the sample are positive. 2026 is weaker.
 - Worst trade is about −3.7%; the worst dip inside a trade is −11%.
 
@@ -248,6 +258,37 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 0.086% (I had assumed 0.10%). At those costs, the best idea (Korean semis leading SOXL)
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
+
+## SOXL's own VWAP vs fair value from the chip stocks (`trader/research/pre_fairvalue.py`)
+
+**Why the bot uses SOXL's own pre-market price.** Within one day, SOXL is worth its previous
+close × (1 + 3 × the index's move since then), so its intraday chart is the index's chart stretched
+3×. Multi-day leveraged charts mislead because of the daily reset, but a single day's doesn't. In
+the pre-market (07:00–09:30 ET) the underlying barely trades:
+
+| Symbol | Median pre-market volume | Minutes with a trade |
+|---|---|---|
+| SOXL | 2.9M | 100% |
+| SOXX | 21k | 11% |
+| SMH | 33k | 20% |
+
+So SOXX's pre-market VWAP is mostly stale, and SOXL's own VWAP is the usable reference.
+
+**The live rule's 87 trades, split by SOXL's gap to fair value** (3× a basket of SMH/NVDA/MU):
+
+| Gap at entry | Avg/trade | Win rate |
+|---|---|---|
+| Far below fair value (−5.8%, SOXL-only selling) | +2.34% | 97% |
+| Middle (−2.8%) | +1.69% | 83% |
+| At fair value (the sector really fell) | +0.47% | 62% |
+
+The rebound edge is mostly SOXL-specific dislocations.
+
+**Buying SOXL purely because it's x% below SOXX-implied fair value doesn't work.** It shows
++0.7% to +1.2% per trade (t 7) only if fills happen at the bottom of instant spikes. Requiring a
+1-minute close below the level, it's −0.5% per trade: when SOXL stays below fair value for a full
+minute it keeps falling (real news, or a stale SOXX price). A fair-value filter on the VWAP rule
+helps only under optimistic fills. Not adopted; the edge monitor watches the live rule.
 
 ## Safety nets: catching what unit tests can't
 
@@ -547,7 +588,7 @@ scalp trade, as a share of the account.
 | 0 / 100 | +24.4% | +22.0% | 1.14 | −19.9% | −6.3% | +92% | +16% |
 | 20 / 80 | +27.2% | +24.4% | 1.39 | −16.9% | −0.6% | +112% | +32% |
 | **30 / 70** | **+28.5%** | **+25.5%** | **1.39** | **−16.6%** | **−0.6%** | **+118%** | **+34%** |
-| 50 / 50 | +30.9% | +27.6% | 1.25 | −20.0% | −3.6% | +130% | +30% |
+| 50 / 50 | +30.9% (corrected: +29.4%) | +27.6% | 1.25 (1.20) | −20.0% (−29.2%) | −3.6% (−5.8%) | +130% | +30% |
 | 70 / 30 | +33.0% | +29.5% | 1.09 | −24.2% | −9.2% | +138% | +16% |
 | 100 / 0 | +35.8% | +31.9% | 0.93 | −32.8% | −23.3% | +148% | −14% |
 
@@ -630,7 +671,7 @@ Expectations live in `trader/edges.json`; regenerate them after re-running resea
 | Edge | Backtest avg/trade | Std/trade | Trades/yr | Half size at drawdown | Off at drawdown |
 |---|---|---|---|---|---|
 | Opening-range breakout (bear regime) | +0.33% | 4.3% | ~90 | −55% | −82% |
-| Pre-market SOXL dip | +1.02% | 2.1% | ~13 | −8.3% | −13.2% |
+| Pre-market SOXL dip (corrected) | +0.35% | 2.5% | ~22 | −17.5% | −28.6% |
 
 **Rules.** Drawdown is the sum of per-trade returns on the position from its peak. At 50%
 sizing, the account sees half of it. The two limits are the worst one-year runs that only 10% and

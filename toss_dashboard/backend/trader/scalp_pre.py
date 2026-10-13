@@ -6,9 +6,9 @@ Validated in trader/research/scalp_ext.py (2021-2026 SIP 1-minute bars, Toss cos
     to forced sellers in a thin market and never chase
   - take profit with a resting sell limit at entry + dip; otherwise sell at 09:25 ET, before the open
   - one trade per day, both semis regimes (it worked in uptrends and downtrends alike)
-  - result per trade after Toss fees: +1.50% if every touch fills (87 trades, t 7.6), +1.02% if we are
-    filled only when a 1-minute bar closes below our price (52 trades, t 3.5); 10-15 trades a year,
-    both halves of the sample positive, 2026 weaker; worst trade about -3.7%, worst dip inside a trade -11%
+  - result per trade after Toss fees, all 2021-2026 days (corrected 2026-10-13): +1.05% if filled on a
+    0.3% trade-through (198 trades, t 6.7), +0.78% reacting like the live bot (124, t 4.5), +0.35% if
+    filled only when a 1-minute bar closes below the level (123, t 1.6; first half of the sample -0.17%)
 Pre-market prints can trade below our price on another venue without filling us (no trade-through
 protection outside regular hours), so the realistic result is the lower range.
 The Korean-hours day market was tested with ten hypothesis families (Korean semis lead-lag, catch-up,

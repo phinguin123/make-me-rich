@@ -256,7 +256,7 @@ def premarket_edges():
         show(labels[k], g_, "pre", limit=k.startswith("p4"), dates=d_)
 
 
-def _dip_trade(c, lo, hi, vol, start, kk, model, e0=180, e1=300, exit_i=325, thru=0.003, rest=10):
+def _dip_trade(c, lo, hi, vol, start, kk, model, e0=180, e1=300, exit_i=325, thru=0.003, rest=10, detail=False):
     """One pre-market dip trade. model: level (filled at the level on a 0.3% trade-through),
     reactive (bar close if still below, else rest 10 min needing a close below), pessimistic
     (filled only when a bar closes below the level, at the level)."""
@@ -288,12 +288,12 @@ def _dip_trade(c, lo, hi, vol, start, kk, model, e0=180, e1=300, exit_i=325, thr
         if buy is None:
             j += 1
             continue
-        ex = c[exit_i]
+        ex, xq = c[exit_i], exit_i
         for q in range(j + 1, exit_i + 1):
             if np.isfinite(hi[q]) and hi[q] >= buy * (1 + kk) * 1.0005:
-                ex = buy * (1 + kk)
+                ex, xq = buy * (1 + kk), q
                 break
-        return ex / buy - 1
+        return (ex / buy - 1, j, xq) if detail else ex / buy - 1
     return None
 
 

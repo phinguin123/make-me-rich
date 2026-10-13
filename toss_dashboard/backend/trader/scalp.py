@@ -26,7 +26,7 @@ from .config import DATA_DIR, Settings
 from .edges import EdgeMonitor
 from .journal import jr
 from .market import MarketData
-from .scalp_pre import PremarketDip
+from .scalp_pre import PreConfig, PremarketBook
 from .toss.client import TossAPIError, TossClient
 
 LOG = logging.getLogger("scalp")
@@ -73,7 +73,7 @@ class ScalpSleeve:
                  entries_blocked: Callable[[], bool] = lambda: False, monitor: EdgeMonitor | None = None):
         self.s, self.broker, self.market, self.toss = settings, broker, market, toss
         self.monitor = monitor
-        self._closing = {"scalp-orb": [0.0, 0.0], "scalp-pre": [0.0, 0.0]}  # P&L, qty sold of the position being closed
+        self._closing: dict[tuple[str, str], list[float]] = {}  # (edge, symbol) -> P&L, qty sold of the position being closed
         self.allow_order, self.log, self.entries_blocked = allow_order, log, entries_blocked
         self.cfg = ScalpConfig(position_frac=settings.scalp_position_frac)
         self.path = DATA_DIR / f"scalp_{broker.name}.json"
@@ -86,7 +86,8 @@ class ScalpSleeve:
         self._prep_day: date | None = None
         self._eod_day: date | None = None
         self.retry_seconds = 60.0  # Toss unreachable (e.g. IP not yet allowlisted): retry the regime fetch
-        self.pre = PremarketDip(self) if settings.scalp_pre else None
+        self.pre = (PremarketBook(self, tuple(settings.pre_names), PreConfig(slots=settings.pre_slots, qqq_filter=settings.pre_qqq_filter))
+                    if settings.scalp_pre else None)
         self.fresh = not self.path.exists()  # never ran: owns no money yet (see allocator)
         self._load()
 
@@ -97,14 +98,13 @@ class ScalpSleeve:
             self.cash, self.realized = float(raw.get("cash", self.cash)), float(raw.get("realized", 0.0))
             self.st = ScalpState(**raw.get("state", {}))
             if self.pre and raw.get("pre"):
-                from .scalp_pre import PreState
-                self.pre.st = PreState(**raw["pre"])
+                self.pre.load(raw["pre"])
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
         data = {"cash": self.cash, "realized": self.realized, "state": asdict(self.st)}
         if self.pre:
-            data["pre"] = asdict(self.pre.st)
+            data["pre"] = self.pre.dump()
         tmp.write_text(json.dumps(data, indent=2))
         tmp.replace(self.path)
 
@@ -372,7 +372,7 @@ class ScalpSleeve:
             self.st.status, self.st.note = "done", "no breakout today"
         if self.st.qty > 0:
             await self._exit("close")
-        if self.pre and self.pre.st.qty > 0:
+        if self.pre:
             await self.pre.exit_now("close")
         self.save()
 
@@ -412,15 +412,15 @@ class ScalpSleeve:
     def edge_size(self, edge: str) -> float:
         return self.monitor.multiplier(edge) if self.monitor else 1.0
 
-    def edge_closed(self, edge: str, pnl: float, qty: float, entry: float, left: float, **info) -> None:
+    def edge_closed(self, edge: str, pnl: float, qty: float, entry: float, left: float, key: str = "", **info) -> None:
         """Accumulate partial sells; report one trade to the monitor when the position is flat."""
-        acc = self._closing[edge]
+        acc = self._closing.setdefault((edge, key), [0.0, 0.0])
         acc[0] += pnl
         acc[1] += qty
         if left <= 1e-9:
             if self.monitor and acc[1] > 0 and entry > 0:
                 self.monitor.record(edge, acc[0] / (acc[1] * entry), acc[0], **info)
-            self._closing[edge] = [0.0, 0.0]
+            self._closing[(edge, key)] = [0.0, 0.0]
 
     def snapshot(self) -> dict:
         return {"enabled": True, "capital": self.s.scalp_capital, "equity": self.equity(), "cash": self.cash,

@@ -75,7 +75,7 @@ def test_premarket_vwap_uses_sip_bars(tmp_path):
     tp.quote(md, 50.0)
     tp.tick(sleeve, tp.at(7, 29))
     tp.tick(sleeve, tp.at(7, 30))
-    pre = sleeve.pre.st
+    pre = sleeve.pre.names["SOXL"].st
     assert pre.source == "sip" and abs(pre.vwap - 50.0) < 1e-9 and pre.level < 50.0
 
 

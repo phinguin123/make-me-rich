@@ -1,12 +1,18 @@
-"""Pre-market edge for the scalp sleeve: buy liquidity-driven SOXL dips below the pre-market VWAP.
+"""Pre-market edge for the scalp sleeve: buy liquidity-driven dips below the pre-market VWAP, on a book of
+14 liquid names that have no 24-hour futures anchor (SOXL, SOXS, NVDA, MU, AMD, TSLA, MSTR, PLTR, COIN, META,
+AAPL, AMZN, TSLL, NVDL; index ETFs like TQQQ don't work: futures keep them at fair value).
 
-Validated in trader/research/scalp_ext.py (2021-2026 SIP 1-minute bars, Toss costs):
-  - between 07:00 and 09:00 ET, when SOXL trades `dip` below its pre-market VWAP (dip = 0.4 x SOXL's
-    20-day daily volatility, at least 1.5%), buy with a limit order AT that level: we provide liquidity
-    to forced sellers in a thin market and never chase
+Validated in trader/research/scalp_ext.py, pre_multi.py, pre_slots.py (2021-2026 SIP 1-minute bars, Toss costs):
+  - between 07:00 and 09:00 ET, when a name trades `dip` below its pre-market VWAP (dip = 0.4 x its
+    20-day daily volatility, 1.5%-6%) and 0.3% through, buy with a limit order at that level: we provide
+    liquidity to forced sellers in a thin market and never chase
   - take profit with a resting sell limit at entry + dip; otherwise sell at 09:25 ET, before the open
-  - one trade per day, both semis regimes (it worked in uptrends and downtrends alike)
-  - result per trade after Toss fees, all 2021-2026 days (corrected 2026-10-13): +1.05% if filled on a
+  - at most 3 positions at once, each a third of the scalp pot; one trade per name per day
+  - only while QQQ closed above its 200-day average (dip-buying lost in the 2022 bear market)
+  - book result on its own money (3 slots + QQQ filter): +21%/yr with strict fills (Sharpe 2.5, max DD -17%),
+    +29%/yr reacting like the live bot (Sharpe 3.3, max DD -10%); 2024-26 out of sample per trade +0.7% to +0.9%
+  - SOXL alone, all 2021-2026 days:
+    after Toss fees (corrected 2026-10-13): +1.05% if filled on a
     0.3% trade-through (198 trades, t 6.7), +0.78% reacting like the live bot (124, t 4.5), +0.35% if
     filled only when a 1-minute bar closes below the level (123, t 1.6; first half of the sample -0.17%)
 Pre-market prints can trade below our price on another venue without filling us (no trade-through
@@ -23,6 +29,8 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Callable
 
+import pandas as pd
+
 from .broker import Order
 from .journal import jr
 from .toss.client import TossAPIError
@@ -34,6 +42,8 @@ from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
 SEC_FEE = 0.0000206
+NAMES = ("SOXL", "SOXS", "NVDA", "MU", "AMD", "TSLA", "MSTR", "PLTR", "COIN", "META", "AAPL", "AMZN", "TSLL", "NVDL")
+ACTIVE = ("entry_open", "in_trade", "exiting", "exit_pending")
 
 
 @dataclass
@@ -47,10 +57,13 @@ class PreConfig:
     rest_seconds: float = 600  # an unfilled entry rests at the level this long (backtest: 10 minutes)
     max_attempts: int = 2
     through: float = 0.003  # buy only once the price trades this far below the level (as the research required)
+    slots: int = 3  # positions at once across the book, each 1/slots of the scalp pot
+    qqq_filter: bool = True  # trade only while QQQ's prior close is above its 200-day average
 
 
 @dataclass
 class PreState:
+    symbol: str = "SOXL"
     day: str = ""
     status: str = "idle"  # idle | waiting | watching | entry_open | in_trade | exiting | exit_pending | done | standing_aside
     sigma: float = 0.0
@@ -71,12 +84,12 @@ class PreState:
 
 
 class PremarketDip:
-    SYMBOL = "SOXL"
+    """One name of the book: its own state, orders and exits. The book prepares it and feeds its VWAP."""
 
-    def __init__(self, sleeve: "ScalpSleeve"):
-        self.sl = sleeve
-        self.cfg = PreConfig()
-        self.st = PreState()
+    def __init__(self, book: "PremarketBook", symbol: str):
+        self.book, self.sl, self.cfg = book, book.sl, book.cfg
+        self.SYMBOL = symbol
+        self.st = PreState(symbol=symbol)
         self.bars: dict[datetime, tuple[float, float, float, float]] = {}  # start -> (high, low, close, volume)
         self.busy = False
         self.now: datetime | None = None
@@ -92,7 +105,10 @@ class PremarketDip:
         return datetime.combine(day, t, ET)
 
     def _log(self, msg: str, level: int = logging.INFO) -> None:
-        self.sl.log(f"Pre-market: {msg}", level)
+        self.sl.log(f"Pre-market {self.SYMBOL}: {msg}", level)
+
+    def active(self) -> bool:
+        return self.st.qty > 0 or self.st.status in ACTIVE
 
     def value(self) -> float:
         return self.st.qty * (self.sl.market.get(self.SYMBOL).last or self.st.entry) if self.st.qty > 0 else 0.0
@@ -104,20 +120,11 @@ class PremarketDip:
         if not self._resumed:
             self._resumed = True
             self._resume(spawn)
-        if self._prep_day != today.isoformat() and pre["open"] <= now < regular_open + timedelta(hours=6):
-            self._prep_day = today.isoformat()
-            self.busy = True
-            spawn(self._guard(self.prepare(today, now)))
-            return
         if self.busy or self.st.day != today.isoformat():
             return
         start = max(self._at(today, self.cfg.start), pre["open"] + timedelta(minutes=30))
         cutoff = self._at(today, self.cfg.cutoff)
         exit_at = min(self._at(today, self.cfg.exit_at), pre["close"] - timedelta(minutes=4))
-        minute = now.replace(second=0, microsecond=0)
-        if pre["open"] <= now < cutoff and minute != self._minute and now.second >= 2:
-            self._minute = minute
-            spawn(self._guard(self.refresh_vwap(now, pre["open"]), hold=False))
         if self.st.status == "entry_open":  # a resting entry: finished on a fill, when its time is up, or at the cutoff
             o = self.entry_order
             rest_over = bool(self.st.rest_until) and now >= datetime.fromisoformat(self.st.rest_until)
@@ -136,8 +143,9 @@ class PremarketDip:
                 self.sl.save()
             elif now >= start and self.st.level and not self.sl.entries_blocked():
                 px = self._fresh()
-                if px and px <= self.st.level * (1 - self.cfg.through):
+                if px and px <= self.st.level * (1 - self.cfg.through) and self.book.slot_free():
                     self.busy = True
+                    self.book.reserved.add(self.SYMBOL)  # holds the slot until the order exists
                     spawn(self._guard(self._enter(today)))
 
     async def _guard(self, coro, hold: bool = True) -> None:
@@ -148,6 +156,7 @@ class PremarketDip:
         finally:
             if hold:
                 self.busy = False
+            self.book.reserved.discard(self.SYMBOL)
             self.sl.save()
 
     def _fresh(self) -> float:
@@ -156,40 +165,30 @@ class PremarketDip:
             return 0.0
         return st.last if (datetime.now(ET) - st.last_ts.astimezone(ET)).total_seconds() < 30 else 0.0
 
-    # ── daily setup ───────────────────────────────────────────────────────
-    async def prepare(self, today: date, now: datetime) -> None:
+    # ── daily setup (called by the book with the closes it fetched for every name) ──
+    def setup(self, today: date, now: datetime, closes: list[float] | None, regime_note: str) -> None:
         if self.st.day == today.isoformat() and self.st.status not in ("idle",):
             return
         carried = (self.st.qty, self.st.entry) if self.st.qty > 0 else None
-        self.st = PreState(day=today.isoformat())
+        self.st = PreState(symbol=self.SYMBOL, day=today.isoformat())
         self.bars.clear()
         if carried:
             self.st.qty, self.st.entry = carried
-            self.st.status, self.st.note = "exit_pending", "pre-market position carried from a failed exit; selling now"
-            self._log(f"{carried[0]:g} SOXL carried — selling", logging.WARNING)
+            self.st.status, self.st.note = "exit_pending", "position carried from a failed exit; selling now"
+            self._log(f"{carried[0]:g} carried — selling", logging.WARNING)
             return
         if now.time() >= self.cfg.cutoff:
             self.st.status, self.st.note = "done", "started after the 09:00 entry cutoff"
             return
-        self.st.status, self.st.note = "standing_aside", "loading SOXL history"
-        closes = None
-        while closes is None:
-            try:
-                res = await self.sl.toss.candles(self.SYMBOL, "1d", count=30)
-                closes = [float(c["closePrice"]) for c in res.get("candles", [])
-                          if datetime.fromisoformat(c["timestamp"]).date() < today][:21]
-            except TossAPIError as exc:  # e.g. this machine's IP not yet in the Toss allowlist: keep trying
-                if (self.now or datetime.now(ET)).time() >= self.cfg.cutoff:
-                    self.st.note = f"SOXL history unavailable before 09:00 ({exc})"
-                    return
-                if self.st.note == "loading SOXL history":
-                    self._log(f"SOXL history failed ({exc}); retrying every minute", logging.WARNING)
-                self.st.note = f"SOXL history failed ({exc}); retrying"
-                self.sl.save()
-                await asyncio.sleep(self.sl.retry_seconds)
+        if regime_note:
+            self.st.status, self.st.note = "standing_aside", regime_note
+            return
+        if not closes:
+            self.st.status, self.st.note = "standing_aside", "no daily history"
+            return
         rets = [math.log(a / b) for a, b in zip(closes[:-1], closes[1:]) if a > 0 and b > 0]
         if len(rets) < 15:
-            self.st.status, self.st.note = "standing_aside", "not enough SOXL history"
+            self.st.status, self.st.note = "standing_aside", "not enough daily history"
             return
         if max(abs(r) for r in rets) > 0.5:
             self.st.status, self.st.note = "standing_aside", "split or bad price in the last 20 days"
@@ -199,36 +198,25 @@ class PremarketDip:
         self.st.dip = min(self.cfg.max_dip, max(self.cfg.min_dip, self.cfg.z * self.st.sigma))
         if self.sl.edge_size("scalp-pre") <= 0:
             self.st.status, self.st.note = "standing_aside", "switched off by the edge monitor (live results far below the backtest)"
-            jr("D", "pre", "prepare", {"sigma": self.st.sigma, "dip": self.st.dip, "status": self.st.status})
-            return
-        self.st.status, self.st.note = "watching", ""
-        jr("D", "pre", "prepare", {"sigma": self.st.sigma, "dip": self.st.dip, "status": "watching"})
-        self._log(f"watching for SOXL {self.st.dip:.2%} below the pre-market VWAP, 07:00-09:00 ET "
-                  f"(20-day vol {self.st.sigma:.1%})")
+        else:
+            self.st.status, self.st.note = "watching", ""
+        jr("D", "pre", "prepare", {"sym": self.SYMBOL, "sigma": self.st.sigma, "dip": self.st.dip, "status": self.st.status})
 
-    async def refresh_vwap(self, now: datetime, pre_open: datetime) -> None:
-        """Pre-market VWAP from completed 1-minute bars since 04:00 ET: Alpaca SIP bars (the research data),
-        else Toss candles (Toss stamps bars with their end)."""
-        alpaca = getattr(self.sl.market, "alpaca", None)
-        if alpaca is not None:
-            try:
-                df = await alpaca.bars([self.SYMBOL], "1Min", pre_open.isoformat(), now.isoformat(), feed="sip", adjustment="raw")
-                bars = {}
-                for row in df.itertuples(index=False):
-                    end = row.ts.tz_convert(ET).to_pydatetime() + timedelta(minutes=1)  # Alpaca stamps the start
-                    if pre_open < end <= now:
-                        bars[end] = (float(row.high), float(row.low), float(row.close), float(row.volume))
-                if bars:
-                    self.bars, self.st.source = bars, "sip"
-                    self._set_vwap()
-                    return
-            except Exception as exc:  # noqa: BLE001 — fall back to Toss candles
-                self._log(f"SIP bars failed ({exc}); using Toss candles", logging.WARNING)
-        if self.st.source == "sip":
-            self.bars.clear()  # don't mix sources in one VWAP
-        self.st.source = "toss"
+    def set_bars(self, bars: dict, source: str) -> None:
+        if source == "sip":
+            self.bars = bars  # SIP returns the whole session every minute
+        else:
+            if self.st.source == "sip":
+                self.bars.clear()  # don't mix sources in one VWAP
+            self.bars.update(bars)
+        self.st.source = source
+        self._set_vwap()
+
+    async def refresh_from_toss(self, now: datetime, pre_open: datetime) -> None:
+        """Fallback when Alpaca isn't available: Toss 1-minute candles (Toss stamps bars with their end)."""
         before = None
-        backfill = not self.bars
+        backfill = not self.bars or self.st.source != "toss"
+        got: dict = {}
         for _ in range(4):
             try:
                 res = await self.sl.toss.candles(self.SYMBOL, "1m", count=200 if backfill else 10, before=before)
@@ -241,11 +229,11 @@ class PremarketDip:
                 ts = datetime.fromisoformat(x["timestamp"]).astimezone(ET)
                 oldest = ts if oldest is None or ts < oldest else oldest
                 if pre_open < ts <= now:
-                    self.bars[ts] = (float(x["highPrice"]), float(x["lowPrice"]), float(x["closePrice"]), float(x["volume"]))
+                    got[ts] = (float(x["highPrice"]), float(x["lowPrice"]), float(x["closePrice"]), float(x["volume"]))
             before = res.get("nextBefore")
             if not backfill or not cs or not before or (oldest and oldest <= pre_open):
                 break
-        self._set_vwap()
+        self.set_bars(got, "toss")
 
     def _set_vwap(self) -> None:
         pv = sum((h + l + c) / 3 * v for h, l, c, v in self.bars.values())
@@ -253,23 +241,23 @@ class PremarketDip:
         if vol > 0:
             self.st.vwap = pv / vol
             self.st.level = math.floor(self.st.vwap * (1 - self.st.dip) * 100) / 100 if self.st.dip else 0.0
-            jr("D", "pre", "vwap", {"vwap": self.st.vwap, "level": self.st.level, "last": self.sl.market.get(self.SYMBOL).last,
-                                    "bars": len(self.bars), "src": self.st.source})
+            jr("D", "pre", "vwap", {"sym": self.SYMBOL, "vwap": self.st.vwap, "level": self.st.level,
+                                    "last": self.sl.market.get(self.SYMBOL).last, "bars": len(self.bars), "src": self.st.source})
 
     # ── trading ───────────────────────────────────────────────────────────
     async def _enter(self, today: date) -> None:
         level = self.st.level
         sl = self.sl
-        frac = sl.cfg.position_frac * sl.edge_size("scalp-pre")
+        frac = sl.cfg.position_frac * sl.edge_size("scalp-pre") / max(1, self.cfg.slots)
         qty = math.floor(min(frac * sl.equity(), sl.cash, await sl.broker.cash()) / (level * (1 + sl.broker.commission)))
         if qty < 1 or not sl.allow_order(False):
             self.st.status, self.st.note = "done", "size < 1 share or order throttle"
             return
         self.st.attempts += 1
         self.st.status = "entry_open"
-        jr("D", "pre", "trigger", {"level": level, "last": sl.market.get(self.SYMBOL).last, "vwap": self.st.vwap, "qty": qty,
+        jr("D", "pre", "trigger", {"sym": self.SYMBOL, "level": level, "last": sl.market.get(self.SYMBOL).last, "vwap": self.st.vwap, "qty": qty,
                                    "attempt": self.st.attempts})
-        self._log(f"BUY SOXL {qty} @ {level} limit (dip {self.st.dip:.2%} below VWAP {self.st.vwap:.2f})")
+        self._log(f"BUY {qty} @ {level} limit (dip {self.st.dip:.2%} below VWAP {self.st.vwap:.2f})")
         order = await sl.broker.submit(self.SYMBOL, "BUY", qty, level, "scalp-pre-entry")
         self.entry_order = order
         self.st.entry_id, self.st.entry_qty = order.id, qty
@@ -300,7 +288,7 @@ class PremarketDip:
         if not self.sl.allow_order(True):
             self.st.note = "target not placed (order throttle); selling at 09:25"
             return
-        jr("D", "pre", "target", {"entry": self.st.entry, "target": self.st.target, "qty": self.st.qty})
+        jr("D", "pre", "target", {"sym": self.SYMBOL, "entry": self.st.entry, "target": self.st.target, "qty": self.st.qty})
         order = await self.sl.broker.submit(self.SYMBOL, "SELL", self.st.qty, self.st.target, "scalp-pre-target")
         if order.status == "REJECTED":
             self.st.note = f"target rejected ({order.error}); selling at 09:25"
@@ -311,7 +299,7 @@ class PremarketDip:
     async def _exit(self, reason: str, market: bool = False) -> None:
         sl = self.sl
         self.st.status = "exiting"
-        jr("D", "pre", "exit", {"reason": reason, "qty": self.st.qty, "market": market})
+        jr("D", "pre", "exit", {"sym": self.SYMBOL, "reason": reason, "qty": self.st.qty, "market": market})
         if self.target_order and not self.target_order.done:
             await sl.broker.cancel(self.target_order)
             await sl._wait(self.target_order, 3)
@@ -323,7 +311,7 @@ class PremarketDip:
             q = sl.market.get(self.SYMBOL)
             ref = q.bid or q.last
             limit = None if cushion is None else max(0.01, math.floor(ref * (1 - cushion) * 100) / 100)
-            self._log(f"SELL SOXL {self.st.qty:g} ({reason})")
+            self._log(f"SELL {self.st.qty:g} ({reason})")
             order = await sl.broker.submit(self.SYMBOL, "SELL", self.st.qty, limit, f"scalp-pre-{reason}")
             await sl._wait(order, 5)
             if not order.done:
@@ -385,7 +373,7 @@ class PremarketDip:
             self.st.entry = (self.st.entry * self.st.qty + price * qty + fee) / (self.st.qty + qty)
             self.st.qty += qty
             sl.cash -= qty * price + fee
-            self._log(f"BOUGHT SOXL {qty:g} @ {price:.2f}")
+            self._log(f"BOUGHT {qty:g} @ {price:.2f}")
         else:
             proceeds = qty * price - fee - qty * price * SEC_FEE
             pnl = proceeds - qty * self.st.entry
@@ -397,11 +385,190 @@ class PremarketDip:
             if self.st.qty <= 1e-9 and self.st.status == "in_trade":
                 self.st.status, self.st.target_id = "done", ""
             reason = order.tag.replace("scalp-pre-", "")
-            sl.st.trades.append({"day": self.st.day, "side": "SOXL", "qty": qty, "entry": round(self.st.entry, 4),
+            sl.st.trades.append({"day": self.st.day, "side": self.SYMBOL, "qty": qty, "entry": round(self.st.entry, 4),
                                  "exit": round(price, 4), "pnl": round(pnl, 2), "reason": f"pre {reason}"})
-            self._log(f"SOLD SOXL {qty:g} @ {price:.2f} P&L {pnl:+.2f} ({reason})")
-            sl.edge_closed("scalp-pre", pnl, qty, self.st.entry, self.st.qty, side="SOXL", day=self.st.day)
+            self._log(f"SOLD {qty:g} @ {price:.2f} P&L {pnl:+.2f} ({reason})")
+            sl.edge_closed("scalp-pre", pnl, qty, self.st.entry, self.st.qty, key=self.SYMBOL, side=self.SYMBOL, day=self.st.day)
         sl.save()
 
+    def row(self) -> dict:
+        st = self.st
+        return {"symbol": self.SYMBOL, "status": st.status, "dip": st.dip, "vwap": st.vwap, "level": st.level,
+                "last": self.sl.market.get(self.SYMBOL).last, "qty": st.qty, "entry": st.entry, "target": st.target,
+                "source": st.source, "note": st.note}
+
+
+class PremarketBook:
+    """The pre-market dip on many names: daily setup, one SIP bar request per minute for every name's VWAP,
+    the QQQ trend filter and the shared slots. Each name trades through its own PremarketDip."""
+
+    def __init__(self, sleeve: "ScalpSleeve", names: tuple[str, ...] = NAMES, cfg: PreConfig | None = None):
+        self.sl = sleeve
+        self.cfg = cfg or PreConfig()
+        self.names = {s: PremarketDip(self, s) for s in names}
+        self.reserved: set[str] = set()
+        self.regime = {"ok": True, "qqq": 0.0, "ma200": 0.0, "note": ""}
+        self.busy = False
+        self.now: datetime | None = None
+        self._prep_day = ""
+        self._minute: datetime | None = None
+
+    # ── shared state ──────────────────────────────────────────────────────
+    def slot_free(self) -> bool:
+        used = {s for s, n in self.names.items() if n.active()} | self.reserved
+        return len(used) < self.cfg.slots
+
+    def active_names(self) -> list["PremarketDip"]:
+        return [n for n in self.names.values() if n.active() or n.busy]
+
+    def value(self) -> float:
+        return sum(n.value() for n in self.names.values())
+
+    def holding(self) -> bool:
+        return any(n.st.qty > 0 or n.st.status == "entry_open" for n in self.names.values())
+
+    @property
+    def any_busy(self) -> bool:
+        return self.busy or any(n.busy for n in self.names.values())
+
+    def order_ids(self) -> set[str]:
+        return {i for n in self.names.values() for i in (n.st.entry_id, n.st.target_id) if i}
+
+    def claims(self) -> list[tuple[str, PreState, str]]:
+        return [(f"pre-market {s}", n.st, s) for s, n in self.names.items() if n.st.qty > 0]
+
+    def dump(self) -> dict:
+        return {"names": {s: asdict(n.st) for s, n in self.names.items()}, "regime": self.regime}
+
+    def load(self, raw: dict) -> None:
+        states = raw.get("names") if "names" in raw else {raw.get("symbol", "SOXL"): raw}  # old single-name format
+        for s, st in (states or {}).items():
+            if s in self.names:
+                self.names[s].st = PreState(**{**st, "symbol": s})
+        self.regime = raw.get("regime", self.regime)
+
+    # ── scheduling ────────────────────────────────────────────────────────
+    def tick(self, now: datetime, pre: dict, regular_open: datetime, spawn: Callable) -> None:
+        today = now.date()
+        if self._prep_day != today.isoformat() and pre["open"] <= now < regular_open + timedelta(hours=6):
+            self._prep_day = today.isoformat()
+            self.busy = True
+            spawn(self._guarded(self.prepare(today, now)))
+            return
+        if self.busy:
+            return
+        cutoff = datetime.combine(today, self.cfg.cutoff, ET)
+        minute = now.replace(second=0, microsecond=0)
+        if pre["open"] <= now < cutoff and minute != self._minute and now.second >= 2:
+            self._minute = minute
+            spawn(self._guarded(self.refresh(now, pre["open"]), hold=False))
+        for n in self.names.values():
+            n.tick(now, pre, regular_open, spawn)
+
+    async def _guarded(self, coro, hold: bool = True) -> None:
+        try:
+            await coro
+        except Exception as exc:  # noqa: BLE001 — never kill the engine loop
+            self.sl.log(f"Pre-market book error {exc!r}", logging.ERROR)
+        finally:
+            if hold:
+                self.busy = False
+            self.sl.save()
+
+    async def prepare(self, today: date, now: datetime) -> None:
+        self.now = now
+        for n in self.names.values():
+            n.now = now
+        closes = await self._daily_closes(today, list(self.names) + (["QQQ"] if self.cfg.qqq_filter else []), 260)
+        note = ""
+        if self.cfg.qqq_filter:
+            q = closes.get("QQQ") or []
+            if len(q) >= 150:
+                ma = sum(q[:200]) / len(q[:200])
+                self.regime = {"ok": q[0] > ma, "qqq": q[0], "ma200": ma, "note": ""}
+                if q[0] <= ma:
+                    note = f"QQQ {q[0]:.2f} below its 200-day average {ma:.2f}: dip-buying lost in bear markets (2022)"
+            else:
+                self.regime = {"ok": False, "qqq": 0.0, "ma200": 0.0, "note": "no QQQ history"}
+                note = "QQQ history unavailable: standing aside"
+            self.regime["note"] = note
+            jr("D", "pre", "regime", self.regime)
+        for s, n in self.names.items():
+            n.setup(today, now, (closes.get(s) or [])[:21], note)
+        watching = [s for s, n in self.names.items() if n.st.status == "watching"]
+        self.sl.log(f"Pre-market book: watching {len(watching)} names {', '.join(watching)} "
+                    f"({self.cfg.slots} slots{'; ' + note if note else ''})", logging.INFO)
+
+    async def _daily_closes(self, today: date, symbols: list[str], count: int) -> dict[str, list[float]]:
+        """Daily closes before today, newest first: Alpaca (one request for all names), else Toss per name."""
+        alpaca = getattr(self.sl.market, "alpaca", None)
+        out: dict[str, list[float]] = {}
+        if alpaca is not None:
+            try:
+                start = datetime.combine(today - timedelta(days=int(count * 1.6)), time(0, 0), ET)
+                df = await alpaca.bars(symbols, "1Day", start.isoformat(), datetime.combine(today, time(0, 0), ET).isoformat(),
+                                       feed="sip", adjustment="split")
+                for sym, g in df.groupby("symbol"):
+                    g = g[g["ts"].dt.tz_convert(ET).dt.date < today].sort_values("ts", ascending=False)
+                    out[sym] = [float(x) for x in g["close"].head(count)]
+            except Exception as exc:  # noqa: BLE001 — fall back to Toss
+                self.sl.log(f"Pre-market: Alpaca daily bars failed ({exc}); using Toss", logging.WARNING)
+        for sym in symbols:
+            if out.get(sym):
+                continue
+            for attempt in range(30):
+                try:
+                    res = await self.sl.toss.candles(sym, "1d", count=min(count, 300))
+                    out[sym] = [float(c["closePrice"]) for c in res.get("candles", [])
+                                if datetime.fromisoformat(c["timestamp"]).date() < today][:count]
+                    break
+                except TossAPIError as exc:  # e.g. the IP not yet allowlisted: keep trying until 09:00
+                    if (self.now or datetime.now(ET)).time() >= self.cfg.cutoff and attempt:
+                        break
+                    if attempt == 0:
+                        self.sl.log(f"Pre-market: {sym} history failed ({exc}); retrying", logging.WARNING)
+                    await asyncio.sleep(self.sl.retry_seconds)
+        return out
+
+    async def refresh(self, now: datetime, pre_open: datetime) -> None:
+        """Every name's completed 1-minute bars since 04:00 ET: one Alpaca SIP request (the research data)."""
+        alpaca = getattr(self.sl.market, "alpaca", None)
+        live = [s for s, n in self.names.items() if n.st.status in ("watching",) + ACTIVE]
+        if not live:
+            return
+        if alpaca is not None:
+            try:
+                df = await alpaca.bars(live, "1Min", pre_open.isoformat(), now.isoformat(), feed="sip", adjustment="raw")
+                if len(df):
+                    # plain arrays: bar end = start + 1 minute (Alpaca stamps the start); keys are epoch ns
+                    ends = df["ts"].to_numpy(dtype="datetime64[ns]").astype("int64") + 60_000_000_000
+                    lo_ns, hi_ns = pd.Timestamp(pre_open).value, pd.Timestamp(now).value
+                    keep = (ends > lo_ns) & (ends <= hi_ns)
+                    syms = df["symbol"].to_numpy()
+                    hlcv = df[["high", "low", "close", "volume"]].to_numpy(dtype=float)
+                    for sym in set(syms[keep]):
+                        if sym in self.names:
+                            sel = keep & (syms == sym)
+                            self.names[sym].set_bars(dict(zip(ends[sel].tolist(), map(tuple, hlcv[sel].tolist()))), "sip")
+                return
+            except Exception as exc:  # noqa: BLE001 — fall back to Toss candles
+                self.sl.log(f"Pre-market: SIP bars failed ({exc}); using Toss candles", logging.WARNING)
+        for s in live:
+            await self.names[s].refresh_from_toss(now, pre_open)
+
+    # ── fills and exits ───────────────────────────────────────────────────
+    def on_fill(self, order: Order, qty: float, price: float) -> None:
+        n = self.names.get(order.symbol)
+        if n is not None:
+            n.on_fill(order, qty, price)
+
+    async def exit_now(self, reason: str = "manual") -> None:
+        for n in self.names.values():
+            if n.st.qty > 0:
+                await n.exit_now(reason)
+
     def snapshot(self) -> dict:
-        return {"enabled": True, "state": asdict(self.st), "config": {k: str(v) for k, v in asdict(self.cfg).items()}}
+        rows = [n.row() for n in self.names.values()]
+        return {"enabled": True, "regime": self.regime, "slots": self.cfg.slots,
+                "used": len({s for s, n in self.names.items() if n.active()}), "names": rows,
+                "config": {k: str(v) for k, v in asdict(self.cfg).items()}}

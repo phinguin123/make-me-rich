@@ -76,7 +76,8 @@ class Engine:
         self.broker.on_fill = self._on_fill
         self.swing = SwingSleeve(settings, self.broker, self._swing_prices, self.log) if settings.swing_capital > 0 else None
         self.edges = EdgeMonitor(DATA_DIR / f"edges_{self.broker.name}.json", self.log)
-        self.broker.guard = OrderGuard(self._bot_money, self._fresh_quote, self.broker.open_orders)
+        self.broker.guard = OrderGuard(self._bot_money, self._fresh_quote, self.broker.open_orders,
+                                       scalp_symbols={"SOXL", "SOXS"} | set(settings.pre_names if settings.scalp_pre else ()))
         self.broker.on_refuse = self._warn
         self.scalp = (ScalpSleeve(settings, self.broker, self.market, self.toss, self.risk.allow_order, self.log,
                                   entries_blocked=lambda: self.paused or self.risk.status.halted, monitor=self.edges)
@@ -109,6 +110,7 @@ class Engine:
         self.session: dict[str, datetime] | None = None
         self.pre_session: dict[str, datetime] | None = None
         self._jr_minute: datetime | None = None
+        self._subs_at = 0.0
         self._jr_summary_day: date | None = None
         self._jr_last_bar: dict[str, datetime] = {}
         self._session_day: date | None = None
@@ -191,8 +193,8 @@ class Engine:
         scalp_claims = []
         if self.scalp and self.scalp.st.qty > 0 and self.scalp.st.side:
             scalp_claims.append(("scalp", self.scalp.st, self.scalp.st.side))
-        if self.scalp and self.scalp.pre and self.scalp.pre.st.qty > 0:
-            scalp_claims.append(("pre-market", self.scalp.pre.st, "SOXL"))
+        if self.scalp and self.scalp.pre:
+            scalp_claims += self.scalp.pre.claims()
         if not self.s.live or not (self.positions or (self.swing and self.swing.holdings) or scalp_claims):
             return
         try:
@@ -229,7 +231,7 @@ class Engine:
             return
         keep: set[str] = set()
         if self.scalp and self.scalp.pre:
-            keep |= {self.scalp.pre.st.target_id, self.scalp.pre.st.entry_id} - {""}
+            keep |= self.scalp.pre.order_ids()
         keep_cond = {p.server_stop_id for p in self.positions.values() if p.server_stop_id}
         if self.scalp and self.scalp.st.backup_id and self.scalp.st.qty > 0:
             keep_cond.add(self.scalp.st.backup_id)
@@ -449,6 +451,9 @@ class Engine:
                 self._spawn(self.swing.rebalance(today, self._swing_cash, self.risk.allow_order, buys_allowed=lambda: not self.paused))
         if self.scalp:  # pre-market, regular-session breakout and its end of day: all in the sleeve
             self.scalp.tick(now, self.session, self.pre_session, self._spawn)
+        if time_module.monotonic() - self._subs_at > 600:  # picks up new swing holdings for the SIP stream
+            self._subs_at = time_module.monotonic()
+            self._update_subscriptions()
         if time_module.monotonic() - self._macro_ext_at > 600:
             self._macro_ext_at = time_module.monotonic()
             self._spawn(self._refresh_macro_ext())
@@ -497,8 +502,9 @@ class Engine:
             pos = {}
             if self.scalp.st.qty > 0:
                 pos[self.scalp.st.side] = [self.scalp.st.qty, self.scalp.st.entry]
-            if self.scalp.pre and self.scalp.pre.st.qty > 0:
-                pos["SOXL(pre)"] = [self.scalp.pre.st.qty, self.scalp.pre.st.entry]
+            if self.scalp.pre:
+                for _, st, sym in self.scalp.pre.claims():
+                    pos[f"{sym}(pre)"] = [st.qty, st.entry]
             jr("P", "scalp", self.scalp.cash, self.scalp.equity(), pos)
         if self.swing:
             jr("P", "swing", self.swing.cash, self.swing.value(),
@@ -539,10 +545,13 @@ class Engine:
         active = live_setups | set(self.positions)
         regime_syms = {"none": set(), "qqq_vwap": {"QQQ"}, "qqq_green": {"QQQ"}, "risk_on": {"QQQ", "VIXY"}}[self.cfg.regime]
         scalp_syms = set(SCALP_SYMBOLS) if self.scalp else set()
+        if self.scalp and self.scalp.pre:
+            scalp_syms |= set(self.scalp.pre.names)  # the pre-market book's names: full tape + NBBO
         books = active | ({"SOXL", "SOXS"} if self.scalp else set())
         self.stream.set_symbols(trades=set(MACRO) | active | scalp_syms, books=books)
-        if self.sip:  # full tape + NBBO; Toss frames stay as the fallback
-            self.sip.set_symbols(trades=set(MACRO) | active | scalp_syms, quotes=books | scalp_syms)
+        if self.sip:  # full tape + NBBO; Toss frames stay as the fallback; swing holdings for live valuation
+            held = set(self.swing.holdings) if self.swing else set()
+            self.sip.set_symbols(trades=set(MACRO) | active | scalp_syms | held, quotes=books | scalp_syms)
         self.market.bar_symbols = active | regime_syms | ({"SOXL"} if self.scalp else set())
 
     async def _load_prev_closes(self) -> None:
@@ -566,6 +575,20 @@ class Engine:
 
     async def _swing_prices(self, symbols: list[str]) -> dict[str, float]:
         out: dict[str, float] = {}
+        if self.alpaca is not None and symbols:  # SIP latest trades for every name in one request
+            try:
+                snaps = await self.alpaca.snapshots(symbols, feed="sip")
+                now = datetime.now(ET)
+                for sym, snap in (snaps or {}).items():
+                    px = float(((snap or {}).get("latestTrade") or {}).get("p") or 0)
+                    if px > 0:
+                        out[sym] = px
+                        self.market.on_trade(sym, px, 0.0, now, src="sip")
+                if len(out) == len(set(symbols)):
+                    return out
+            except Exception as exc:  # noqa: BLE001 — fall back to Toss prices
+                self.log(f"SIP snapshots failed ({exc}); using Toss prices", logging.WARNING)
+        symbols = [s for s in symbols if s not in out]
         for i in range(0, len(symbols), 20):
             try:
                 for row in await self.toss.prices(symbols[i : i + 20]):

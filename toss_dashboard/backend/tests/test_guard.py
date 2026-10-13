@@ -21,7 +21,7 @@ def test_allowed_orders_pass():
 
 
 def test_symbols_size_price_windows_doubles_counts():
-    assert "only trade SOXL/SOXS" in guard_at(8, 0).check("TQQQ", "BUY", 10, 50, "scalp-entry")
+    assert "may only trade SOXL/SOXS" in guard_at(8, 0).check("TQQQ", "BUY", 10, 50, "scalp-entry")
     assert "leveraged" in guard_at(10, 0).check("SOXL", "BUY", 0, None, "swing-buy", amount=500)
     assert guard_at(10, 0).check("SOXS", "BUY", 0, None, "swing-buy", amount=500) == ""  # the SOXS hedge
     assert "exceeds 60%" in guard_at(8, 0).check("SOXL", "BUY", 70, 120.05, "scalp-pre-entry")  # $8.4k of $12.5k
@@ -32,6 +32,9 @@ def test_symbols_size_price_windows_doubles_counts():
     assert guard_at(15, 58).check("SOXL", "SELL", 10, 119.8, "scalp-close") == ""  # exits are never time-blocked
     working = Order(id="x", client_id="", symbol="SOXL", side="BUY", qty=5, limit=119, tag="scalp-pre-entry")
     assert "already working" in guard_at(8, 0, open_orders=[working]).check("SOXL", "BUY", 5, 119, "scalp-pre-entry")
+    assert guard_at(8, 0, open_orders=[working]).check("SOXS", "BUY", 5, 38.0, "scalp-pre-entry") == ""  # another name: fine
+    three = [Order(id=str(i), client_id="", symbol=s, side="BUY", qty=1, limit=10, tag="scalp-pre-entry") for i, s in enumerate(("A", "B", "C"))]
+    assert "3 scalp buys" in guard_at(8, 0, open_orders=three).check("SOXS", "BUY", 5, 38.0, "scalp-pre-entry")
     g = guard_at(8, 0)
     for _ in range(30):
         assert g.check("SOXL", "BUY", 1, 120.05, "scalp-pre-entry") == ""

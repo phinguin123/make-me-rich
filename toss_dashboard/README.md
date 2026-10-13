@@ -18,7 +18,7 @@ DD, against −22% for 30/70, for only 2–6 months less time to $100k. Backtest
 the corrected ones (2021-01 to 2026-10, yearly rebalance).
 
 - **Timing (KST, US summer time):**
-  - Pre-market dip: buys 20:00–22:00, out by 22:25.
+  - Pre-market dip book (14 names, 3 slots, QQQ filter): buys 20:00–22:00, out by 22:25.
   - Breakout: 22:30–04:57, only in semis downtrends, never held overnight.
   - Swing: trades at 22:36 on rebalance days.
 - **Adding or removing money:** after you deposit or withdraw in Toss, use **Add to bot / Take
@@ -263,7 +263,47 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
-## Pre-market dip beyond SOXL (`trader/research/pre_multi.py`, research only)
+## Pre-market dip book: 14 names (live from 2026-10-14)
+
+**Names:** SOXL, SOXS, NVDA, MU, AMD, TSLA, MSTR, PLTR, COIN, META, AAPL, AMZN, TSLL, NVDL. They're
+liquid in the pre-market and have no 24-hour futures anchor.
+
+**Same rule per name:** 0.4σ of its own volatility below its pre-market VWAP, a 0.3% trade-through,
+take profit at +dip, out by 09:25 ET.
+
+**Shared limits:**
+- At most 3 positions at once, each a third of the scalp pot. Signals are taken in time order, one
+  trade per name per day.
+- Only while QQQ's prior close is above its 200-day average.
+- The order guard allows these names for scalp entries; a second buy of the same name, or a fourth
+  working scalp buy, is refused.
+
+**Plumbing:**
+- One Alpaca SIP request per minute gives every name's VWAP.
+- One daily-bar request gives every volatility and QQQ.
+- All 14 names are on the SIP stream for triggers.
+
+**Slot simulation** (`trader/research/pre_slots.py`, 825 signals 2021–2026, return on the scalp
+pot, QQQ filter):
+
+| Slots | Reactive fills | Strict fills |
+|---|---|---|
+| 2 | +43%/yr, max DD −16% | +31%/yr, −24% |
+| **3** | **+29%/yr, −10%, Sharpe 3.3** | **+21%/yr, −17%, Sharpe 2.5** |
+| 4 | +22%/yr, −8% | +16%/yr, −13% |
+| SOXL only, 1 slot (before) | +17%/yr, −15% | +7%/yr, −34% |
+
+**Allocation re-checked with the book** (strict fills): scalp at 100% is +49.9%/yr, Sharpe 1.19
+(SOXL only was 0.89). 30/70 is now the best Sharpe: +33.2%/yr, 1.58, max DD −16.6%, 1-in-20 bad
+year +1.9%. The phases stay. Edge-monitor expectation: +0.66% per trade, about 101 trades a year.
+
+**Tested and rejected:**
+- **News filter** (Alpaca news, 825 signals): dips with fresh news did no worse. In a QQQ uptrend,
+  3+ news items averaged +0.91% per trade (84% win) against +0.64% with none.
+- **After-hours dips** (16:00–20:00 ET): strict-fill results were flat or negative; SOXS lost 1.8%
+  per trade. They're mostly news (earnings) that keeps going.
+
+## Pre-market dip beyond SOXL (`trader/research/pre_multi.py`)
 
 **Setup.** The exact live rule, not re-tuned, applied to 18 liquid names, 2021–2026 SIP: the dip is
 0.4σ of the name's own volatility below the pre-market VWAP, with a 0.3% trade-through.
@@ -351,17 +391,17 @@ engine's own scheduling method (`ScalpSleeve.tick`), over 327 past days (2023-10
 SIP minute data. A simulated clock and a paper broker use the research's fill rules. Each day is
 compared with `e2_orb` (breakout) and `_dip_trade` (pre-market).
 
-**Current result:**
-- Breakout: same side on 99% of research days, 0 trades the research didn't make, return gap
-  −0.07% per trade.
-- Pre-market: both agree on 85% of days with a trade, return gap +0.2%.
-- No guard refusals and no exceptions.
+**Current result** (book version, last 2 years, about 1 minute on 20 cores):
+- Breakout: same side on 99% of research days, return gap −0.07% per trade.
+- Pre-market book: 88% of (name, day) trades match the research with the same slots and filter;
+  return gap +0.2%.
+- One guard refusal (an AMD print 11% below its level on 2025-10-06) and no exceptions.
 
 **The deploy fails if any of these happens:**
 - Breakout agreement falls below 85%, live-only breakout days exceed 5%, or the breakout return
   gap exceeds 0.25%.
-- Pre-market agreement falls below 75%, or its return gap exceeds 0.5%.
-- The guard refuses a single order, or anything raises an exception.
+- Book (name, day) agreement falls below 70%, or its return gap exceeds 0.5%.
+- Guard refusals exceed 0.3% of trades, or anything raises an exception.
 
 **Planted-bug test (each bug passes the unit tests; the replay blocks all three):**
 

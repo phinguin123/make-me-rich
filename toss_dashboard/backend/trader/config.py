@@ -59,6 +59,11 @@ class Settings:
     scalp_force_day: str = field(default_factory=lambda: _env("TRADER_SCALP_FORCE_DAY"))
     # Pre-market edge of the scalp sleeve (SOXL dips below the pre-market VWAP, 07:00-09:25 ET). 0 disables it.
     scalp_pre: bool = field(default_factory=lambda: _env("TRADER_SCALP_PRE", "1") != "0")
+    # Names of the pre-market dip book (research/pre_multi.py, pre_slots.py), its slots and the QQQ trend filter
+    pre_names: tuple = field(default_factory=lambda: tuple(s.strip().upper() for s in _env(
+        "TRADER_PRE_NAMES", "SOXL,SOXS,NVDA,MU,AMD,TSLA,MSTR,PLTR,COIN,META,AAPL,AMZN,TSLL,NVDL").split(",") if s.strip()))
+    pre_slots: int = field(default_factory=lambda: int(_float("TRADER_PRE_SLOTS", 3)))
+    pre_qqq_filter: bool = field(default_factory=lambda: _env("TRADER_PRE_QQQ_FILTER", "1") != "0")
     # Allocation between the scalp and swing sleeves (shares of their combined money; 0/0 = off).
     # 30/70 is the validated mix (research/allocation_opt.py). The capitals above seed the very first run.
     alloc_scalp: float = field(default_factory=lambda: _float("TRADER_ALLOC_SCALP", 0.0))

@@ -118,7 +118,7 @@ class Allocator:
         sc = self.scalp
         if sc.st.qty > 0 or sc.busy:
             return "scalp holds a position"
-        if sc.pre and (sc.pre.st.qty > 0 or sc.pre.busy or sc.pre.st.status == "entry_open"):
+        if sc.pre and (sc.pre.holding() or sc.pre.any_busy):
             return "pre-market trade open"
         if self.swing.busy:
             return "swing is trading"

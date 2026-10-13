@@ -12,20 +12,49 @@ const tradeCols = [
   { key: "reason", label: "Exit" },
 ];
 
-function PreMarket({ pre, last }) {
-  const open = pre.qty > 0 && last ? (last - pre.entry) * pre.qty : 0;
+const statusTone = { in_trade: "text-emerald-300", entry_open: "text-sky-300", exiting: "text-amber-300", exit_pending: "text-red-400", watching: "text-zinc-300" };
+
+function PreMarket({ pre }) {
+  const rows = pre.names ?? [];
+  const r = pre.regime ?? {};
+  const active = rows.filter((x) => x.qty > 0 || ["entry_open", "in_trade", "exiting", "exit_pending"].includes(x.status));
+  const shown = [...active, ...rows.filter((x) => !active.includes(x))];
   return (
     <div className="border-b border-zinc-900 px-3 py-2 text-xs">
-      <div className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Pre-market · SOXL dip below VWAP · entries 07:00–09:00 ET, out by 09:25</div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
-        <div><div className="text-zinc-500">Status</div><div>{pre.status ?? "—"}</div></div>
-        <div><div className="text-zinc-500">Dip size</div><div className="tabular-nums">{pre.dip ? pct(pre.dip, 2) : "—"}</div></div>
-        <div><div className="text-zinc-500">VWAP / buy level{pre.source ? ` · ${pre.source.toUpperCase()}` : ""}</div><div className="tabular-nums">{pre.vwap ? `${num(pre.vwap)} / ${num(pre.level)}` : "—"}</div></div>
-        <div><div className="text-zinc-500">Position</div><div className="tabular-nums">{pre.qty > 0 ? `${num(pre.qty, 0)} @ ${num(pre.entry)}` : "—"}</div></div>
-        <div><div className="text-zinc-500">Take profit</div><div className="tabular-nums">{pre.target ? num(pre.target) : "—"}</div></div>
-        <div><div className="text-zinc-500">Open P&L</div><div className={`tabular-nums ${signClass(open)}`}>{money(open)}</div></div>
+      <div className="mb-1 flex flex-wrap justify-between gap-2 text-[11px] text-zinc-500">
+        <span className="uppercase tracking-wide">Pre-market dip book · {rows.length} names · entries 07:00–09:00 ET, out by 09:25</span>
+        <span>
+          slots {pre.used ?? 0}/{pre.slots ?? 3} ·{" "}
+          {r.ok === false ? <span className="text-amber-300">QQQ below 200-day: standing aside</span> : r.qqq ? `QQQ ${num(r.qqq)} > 200d ${num(r.ma200)}` : "QQQ filter pending"}
+        </span>
       </div>
-      {pre.note && <div className="mt-1 text-[11px] text-zinc-500">{pre.note}</div>}
+      <div className="max-h-[260px] overflow-auto">
+        <table className="w-full tabular-nums">
+          <thead className="text-zinc-500">
+            <tr>{["Name", "Status", "Last", "VWAP", "Buy level", "Gap", "Dip", "Position", "Target", "P&L"].map((h) => <th key={h} className="px-1.5 py-1 text-left font-normal">{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {shown.map((x) => {
+              const gap = x.level && x.last ? x.last / x.level - 1 : null;
+              const pnl = x.qty > 0 && x.last ? (x.last - x.entry) * x.qty : 0;
+              return (
+                <tr key={x.symbol} className="border-t border-zinc-900" title={x.note || ""}>
+                  <td className="px-1.5 py-1 text-zinc-200">{x.symbol}</td>
+                  <td className={`px-1.5 py-1 ${statusTone[x.status] ?? "text-zinc-500"}`}>{x.status}</td>
+                  <td className="px-1.5 py-1">{x.last ? num(x.last) : "—"}</td>
+                  <td className="px-1.5 py-1">{x.vwap ? num(x.vwap) : "—"}</td>
+                  <td className="px-1.5 py-1">{x.level ? num(x.level) : "—"}</td>
+                  <td className={`px-1.5 py-1 ${gap !== null && gap < 0.005 ? "text-amber-300" : "text-zinc-400"}`}>{gap !== null ? pct(gap, 1) : "—"}</td>
+                  <td className="px-1.5 py-1 text-zinc-400">{x.dip ? pct(x.dip, 1) : "—"}</td>
+                  <td className="px-1.5 py-1">{x.qty > 0 ? `${num(x.qty, 0)} @ ${num(x.entry)}` : "—"}</td>
+                  <td className="px-1.5 py-1">{x.target ? num(x.target) : "—"}</td>
+                  <td className={`px-1.5 py-1 ${signClass(pnl)}`}>{x.qty > 0 ? money(pnl) : ""}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -38,7 +67,7 @@ export default function ScalpPanel({ scalp }) {
   const open = st.qty > 0 && last ? (last - st.entry) * st.qty : 0;
   const regimeTone = st.regime === "bear" ? "text-amber-300" : "text-zinc-400";
   return (
-    <Panel title="SOXL / SOXS scalp · pre-market dip + bear-regime opening-range breakout" right={st.day ?? ""}>
+    <Panel title="Scalp · pre-market dip book (14 names) + SOXL/SOXS bear-regime breakout" right={st.day ?? ""}>
       <div className="grid grid-cols-2 gap-2 border-b border-zinc-900 px-3 py-2 text-xs sm:grid-cols-6">
         <div><div className="text-zinc-500">Regime</div><div className={regimeTone}>{st.regime === "bear" ? "BEAR · trading" : st.regime === "bull" ? "bull · standing aside" : st.regime}</div></div>
         <div><div className="text-zinc-500">SOXX vs 50-day</div><div className="tabular-nums">{st.soxx_ma ? pct(st.soxx_close / st.soxx_ma - 1, 1) : "—"}</div></div>
@@ -48,7 +77,7 @@ export default function ScalpPanel({ scalp }) {
         <div><div className="text-zinc-500">Equity / realized</div><div className="tabular-nums">{money(scalp.equity)} / <span className={signClass(scalp.realized)}>{money(scalp.realized)}</span></div></div>
       </div>
       {st.note && <div className="px-3 py-1.5 text-[11px] text-zinc-500">{st.note}</div>}
-      {scalp.pre?.enabled && <PreMarket pre={scalp.pre.state ?? {}} last={q.SOXL} />}
+      {scalp.pre?.enabled && <PreMarket pre={scalp.pre} />}
       <div className="px-3 py-1 text-[11px] text-zinc-500">SOXL {num(q.SOXL)} · SOXS {num(q.SOXS)} · SOXX {num(q.SOXX)}</div>
       <Table columns={tradeCols} rows={[...(st.trades ?? [])].reverse()} empty="No scalp trades yet" />
     </Panel>

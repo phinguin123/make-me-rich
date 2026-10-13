@@ -38,7 +38,8 @@ class FakeToss:
 
 def make(tmp_path):
     md = MarketData(client=None)
-    s = Settings(mode="paper", capital=0.0, swing_capital=0.0, scalp_capital=2000.0, scalp_force_day="", scalp_position_frac=0.5)
+    s = Settings(mode="paper", capital=0.0, swing_capital=0.0, scalp_capital=2000.0, scalp_force_day="", scalp_position_frac=0.5,
+                 pre_names=("SOXL",), pre_slots=1, pre_qqq_filter=False)
     broker = PaperBroker(md, 0.001, 2000.0)
     sleeve = ScalpSleeve(s, broker, md, FakeToss(), lambda urgent: True, lambda msg, lvl=20: None)
     sleeve.path = tmp_path / "scalp.json"
@@ -66,7 +67,7 @@ def ready(sleeve, md):
     quote(md, 100.0)
     tick(sleeve, at(7, 29))  # prepare: volatility and dip size
     tick(sleeve, at(7, 30))  # first VWAP refresh
-    pre = sleeve.pre.st
+    pre = sleeve.pre.names["SOXL"].st
     assert pre.status == "watching" and 0.019 < pre.dip < 0.022
     assert abs(pre.vwap - 100.0) < 1e-9 and pre.level == round(int(100 * (1 - pre.dip) * 100) / 100, 2)
     return pre
@@ -137,7 +138,7 @@ def test_state_survives_restart(tmp_path):
     again = ScalpSleeve(sleeve.s, broker, md, FakeToss(), lambda urgent: True, lambda msg, lvl=20: None)
     again.path = sleeve.path
     again._load()
-    assert again.pre.st.qty == 10 and again.pre.st.status == "in_trade"
+    assert again.pre.names["SOXL"].st.qty == 10 and again.pre.names["SOXL"].st.status == "in_trade"
     assert abs(again.equity() - sleeve.equity()) < 1e-6
 
 
@@ -156,4 +157,4 @@ def test_history_failure_is_retried(tmp_path):
 
     sleeve.toss.candles = flaky
     tick(sleeve, at(7, 29))
-    assert sleeve.pre.st.status == "watching" and calls["n"] == 3
+    assert sleeve.pre.names["SOXL"].st.status == "watching" and calls["n"] == 3

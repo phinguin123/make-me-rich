@@ -14,15 +14,15 @@
       "slip_model": 0.0003
     },
     "scalp-pre": {
-      "label": "Pre-market SOXL dip below VWAP",
-      "source": "research/scalp_ext.py P5 pessimistic",
-      "mean": 0.00352,
-      "std": 0.02499,
-      "n": 123,
-      "per_year": 21.9,
-      "dd_reduce": -0.1745,
-      "dd_off": -0.2863,
-      "period": "2021-02 .. 2026-10",
+      "label": "Pre-market dip book (14 names, 3 slots, QQQ filter)",
+      "source": "research/pre_slots.py pessimistic",
+      "mean": 0.00661,
+      "std": 0.01868,
+      "n": 521,
+      "per_year": 101.1,
+      "dd_reduce": -0.2078,
+      "dd_off": -0.3117,
+      "period": "2021-08 .. 2026-10",
       "slip_model": 0.0
     }
   }

@@ -72,7 +72,7 @@ def test_sleeve_reports_trades_and_obeys_switch_off(tmp_path):
     assert live["n"] == 1 and 0.01 < live["mean"] < pre.dip  # one winning trade, net of fees
 
     sleeve.monitor.edges["scalp-pre"]["status"] = "off"
-    sleeve.pre.st.day = ""
+    sleeve.pre.names["SOXL"].st.day = ""
     sleeve.pre._prep_day = ""
     tp.tick(sleeve, tp.at(7, 40))
-    assert sleeve.pre.st.status == "standing_aside"
+    assert sleeve.pre.names["SOXL"].st.status == "standing_aside"

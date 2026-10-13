@@ -2,7 +2,7 @@
 
 Per-trade net returns (on the position, after Toss fees and modelled slippage) for each live edge:
   scalp-orb  bear-regime 30-minute opening-range breakout   (research/scalp.py, e2_orb)
-  scalp-pre  pre-market SOXL dip below VWAP, pessimistic fills (research/scalp_ext.py, P5)
+  scalp-pre  pre-market dip book: 14 names, 3 slots, QQQ filter, pessimistic fills (research/pre_slots.py)
 For each: mean, standard deviation, trades per year, and two drawdown limits from 20,000 bootstrap
 resamples of one year of trades: the worst peak-to-trough run that only 10% (dd_reduce) and 1%
 (dd_off) of resampled years reach.
@@ -31,6 +31,30 @@ def orb_trades() -> pd.DataFrame:
 
 
 def pre_trades() -> pd.DataFrame:
+    """Accepted trades of the live book (slots taken in time order, QQQ filter), pessimistic fills."""
+    from .pre_multi import matrices
+    from .pre_slots import all_trades, qqq_up
+    from ..replay import SLOTS
+    from ..scalp_pre import NAMES
+    t = all_trades(matrices(), "pessimistic")
+    up = qqq_up()
+    order = {s: i for i, s in enumerate(NAMES)}
+    t["o"] = t["sym"].map(order)
+    rows = []
+    for d, g in t.groupby("date"):
+        if up.get(d) is not True and up.get(d) != 1:
+            continue
+        busy: list[int] = []
+        for row in g.sort_values(["j", "o"]).itertuples():
+            busy = [q for q in busy if q > row.j]
+            if len(busy) >= SLOTS:
+                continue
+            busy.append(row.q)
+            rows.append((d, row.net))
+    return pd.DataFrame(rows, columns=["date", "net"])
+
+
+def pre_trades_soxl_only() -> pd.DataFrame:
     a = pd.read_parquet(scalp_ext.D / "alpaca_1m.parquet")
     a = a[a["symbol"] == "SOXL"]
     a["et"] = a["ts"].dt.tz_convert(scalp_ext.ET)
@@ -72,7 +96,7 @@ def main() -> None:
     edges = {
         # slip_model: per-side slippage the backtest assumed (compared with live fills vs the NBBO)
         "scalp-orb": stats(orb_trades(), "SOXL/SOXS opening-range breakout (bear regime)", "research/scalp.py e2_orb 30m", rng, 0.0003),
-        "scalp-pre": stats(pre_trades(), "Pre-market SOXL dip below VWAP", "research/scalp_ext.py P5 pessimistic", rng, 0.0),
+        "scalp-pre": stats(pre_trades(), "Pre-market dip book (14 names, 3 slots, QQQ filter)", "research/pre_slots.py pessimistic", rng, 0.0),
     }
     OUT.write_text(json.dumps({"generated": date.today().isoformat(), "edges": edges}, indent=2) + "\n")
     for k, v in edges.items():

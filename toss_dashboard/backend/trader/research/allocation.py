@@ -23,7 +23,10 @@ TAX = 0.22
 
 
 def sleeve_returns() -> pd.DataFrame:
-    orb, pre = orb_trades(), pre_trades()
+    from .pre_multi import matrices
+    from .pre_slots import all_trades, qqq_up, simulate
+    orb = orb_trades()
+    pre_pot = simulate(all_trades(matrices(), "pessimistic"), 3, qqq_up())  # the book's daily return on the scalp pot
     w = portfolio.load()
     eq, trades = portfolio.backtest(w, portfolio.PP())
     swing = eq.pct_change().fillna(eq.iloc[0] / portfolio.PP().capital - 1)
@@ -32,9 +35,9 @@ def sleeve_returns() -> pd.DataFrame:
     df = pd.DataFrame(index=days)
     df["swing"] = swing.reindex(days).fillna(0.0)
     df["orb"] = orb.groupby(orb["date"].dt.normalize())["net"].sum().reindex(days).fillna(0.0)
-    df["pre"] = pre.groupby(pd.to_datetime(pre["date"]).dt.normalize())["net"].sum().reindex(days).fillna(0.0)
+    df["pre"] = pre_pot.reindex(days).fillna(0.0)
     df["orb_n"] = orb.groupby(orb["date"].dt.normalize())["net"].count().reindex(days).fillna(0)
-    df["pre_n"] = pre.groupby(pd.to_datetime(pre["date"]).dt.normalize())["net"].count().reindex(days).fillna(0)
+    df["pre_n"] = (df["pre"] != 0).astype(int)
     return df
 
 

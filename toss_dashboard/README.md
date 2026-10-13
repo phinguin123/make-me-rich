@@ -220,6 +220,45 @@ show the real cost is lower than assumed: SOXL's median half-spread is 0.031% an
 nets +0.06% per trade (t 0.2), so the verdict stands. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
+## Allocation: full scalp vs scalp + swing (`trader/research/allocation.py`)
+
+The sleeves are backtested on the same days, 2021-01 to 2026-10, as separate pots like in the
+bot. Idle cash earns nothing.
+- **Scalp:** the bear-regime breakout plus the pre-market dip, with pessimistic fills.
+- **Swing:** monthly momentum with a 20% volatility target.
+- **After tax:** 22% of each year's gain above the ₩2.5M allowance.
+
+| Plan ($12,400) | CAGR | After tax | Sharpe | Max DD | Worst year |
+|---|---|---|---|---|---|
+| A: full scalp, 50% per trade (before the split) | +19.0% | +17.2% | 0.93 | −17.8% | +1.2% |
+| **B: scalp $6.2k at 100% + swing $6.2k** | **+30.7%** | **+27.5%** | **1.16** | **−21.5%** | **+6.1%** |
+| B, rebalanced to 50/50 each January | +30.7% | +27.5% | 1.24 | −20.0% | +8.1% |
+| C: full scalp, 100% per trade | +35.8% | +31.9% | 0.93 | −32.8% | −0.2% |
+| D: full swing | +24.4% | +22.0% | 1.14 | −19.9% | +5.4% |
+
+**Block bootstrap** (21-day blocks of the joint history, 4,000 paths):
+
+| | Plan A | Plan B (split) |
+|---|---|---|
+| 1-year return, median | +18% | +30% |
+| 1-year return, 5th percentile | −12% | −5% |
+| Chance of losing over 1 year | 18% | 9% |
+| Split ends ahead of A, after 1 year | | 88% of paths |
+| Split ends ahead of A, after 3 years | | 99% of paths |
+
+**Why the split wins:**
+- Scalp is in the market on only 38% of days. The split gives the idle half a second edge.
+- The two sleeves are uncorrelated (daily correlation −0.04), and they earn in opposite regimes.
+  The breakout trades only in semis downtrends (2022: +62% on its pot), while momentum earns in
+  uptrends (2024: +62%). Each sleeve's bad year was covered by the other's: 2026 YTD breakout
+  −13% vs swing +19%.
+- Scalp at 100% of half the money places the same dollar trades as 50% of all of it, so scalp's
+  dollar results don't change.
+- Plan C doubles scalp risk for the same Sharpe; its 1-year 5th percentile is −25%.
+
+**Caveats:** swing's history starts in 2019 (tuned on 2019–22, tested on 2023–26), and 2024's
++62% came from the AI rally. The breakout edge is noisy (t ≈ 1.6).
+
 ## Leveraged-ETF trend rules (research only, `trader/research/lev_trend.py`)
 
 The rule: hold TQQQ or SOXL only while the index is above its 200-day average, otherwise

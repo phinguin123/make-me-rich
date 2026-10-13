@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import math
+import time as time_module
 from collections import deque
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -23,6 +24,9 @@ from .market import MarketData
 from .risk import RiskManager
 from .scanner import Scanner
 from .strategy import Position, Setup, StrategyConfig, arm, hold_overnight, initial_stop, update_trail
+from .scalp import SYMBOLS as SCALP_SYMBOLS, ScalpSleeve
+from .swing import SwingSleeve
+from . import macro as macro_data
 from .toss.client import TossAPIError, TossClient, us_price
 from .toss.stream import TossStream
 
@@ -49,9 +53,18 @@ class Engine:
         self.broker: Broker = (
             TossBroker(self.market, self.commission, self.toss)
             if settings.live
-            else PaperBroker(self.market, self.commission, settings.capital)
+            else PaperBroker(self.market, self.commission, settings.capital + settings.swing_capital + settings.scalp_capital)
         )
         self.broker.on_fill = self._on_fill
+        self.swing = SwingSleeve(settings, self.broker, self._swing_prices, self.log) if settings.swing_capital > 0 else None
+        self.scalp = (ScalpSleeve(settings, self.broker, self.market, self.toss, self.risk.allow_order, self.log,
+                                  entries_blocked=lambda: self.paused or self.risk.status.halted)
+                      if settings.scalp_capital > 0 else None)
+        self._scalp_prep_day: date | None = None
+        self._swing_prep_day: date | None = None
+        self._swing_trade_day: date | None = None
+        self.macro_ext: dict = {}
+        self._macro_ext_at = 0.0
         self.state_path = DATA_DIR / f"state_{self.broker.name}.json"
         self.trades_path = DATA_DIR / f"trades_{self.broker.name}.jsonl"
 
@@ -68,6 +81,7 @@ class Engine:
         self.paused = False
         self.day: date | None = None
         self.session: dict[str, datetime] | None = None
+        self.pre_session: dict[str, datetime] | None = None
         self._session_day: date | None = None
         self.scanned = False
         self.eod_done = False
@@ -143,13 +157,16 @@ class Engine:
 
     async def _reconcile_live(self) -> None:
         """Shrink/drop bot positions that no longer exist in the Toss account."""
-        if not self.s.live or not self.positions:
+        if not self.s.live or not (self.positions or (self.swing and self.swing.holdings)):
             return
         try:
             holdings = {h["symbol"]: float(h["quantity"]) for h in (await self.toss.holdings())["items"]}
         except TossAPIError as exc:
             self.log(f"holdings reconcile failed: {exc}", logging.WARNING)
             return
+        if self.swing:
+            intraday = {k: p.qty for k, p in self.positions.items()}
+            self.swing.reconcile({k: v - intraday.get(k, 0.0) for k, v in holdings.items()})
         for sym, pos in list(self.positions.items()):
             held = holdings.get(sym, 0.0)
             if held + 1e-9 < pos.qty:
@@ -167,6 +184,8 @@ class Engine:
         self._load()
         await self._check_account()
         await self._reconcile_live()
+        if self.swing and self.s.live:
+            await self.swing.resume(self.toss)
         self.stream.on_trade = self._on_trade
         self.stream.on_book = self._on_book
         if isinstance(self.broker, TossBroker):
@@ -217,8 +236,6 @@ class Engine:
                             f"US commission {rate:.3%} is above the {self.s.max_commission:.3%} the strategy was validated at — "
                             "new entries paused. Raise TRADER_MAX_COMMISSION only after re-running the backtest at this rate."
                         )
-                    if c.get("endDate") and c["endDate"] < "2027":
-                        self._warn(f"Toss US commission {rate:.2%} valid until {c['endDate']} — check the rate after that date")
         except TossAPIError as exc:
             self._warn(f"Toss account check failed: {exc}")
 
@@ -231,8 +248,15 @@ class Engine:
     async def _load_session(self, today: date) -> None:
         self._session_day = today
         self.session = None
+        self.pre_session = None
         try:
             cal = await self.toss.us_calendar(today.isoformat())
+            pre = (cal.get("today") or {}).get("preMarket")
+            if pre:
+                self.pre_session = {
+                    "open": datetime.fromisoformat(pre["startTime"]).astimezone(ET),
+                    "close": datetime.fromisoformat(pre["endTime"]).astimezone(ET),
+                }
             reg = (cal.get("today") or {}).get("regularMarket")
             if reg:
                 self.session = {
@@ -246,6 +270,7 @@ class Engine:
                     "open": datetime.combine(today, time(9, 30), ET),
                     "close": datetime.combine(today, time(16, 0), ET),
                 }
+                self.pre_session = {"open": datetime.combine(today, time(4, 0), ET), "close": datetime.combine(today, time(9, 30), ET)}
 
     def _new_day(self, today: date) -> None:
         self.day = today
@@ -270,9 +295,12 @@ class Engine:
             await asyncio.sleep(5)
             return
         open_, close_ = self.session["open"], self.session["close"]
+        if self.scalp and self.scalp.pre and self.pre_session:
+            self.scalp.pre.tick(now, self.pre_session, open_, self._spawn)
         if self.day != today and now >= open_ - timedelta(hours=2):
             self._new_day(today)
-        if open_ - timedelta(minutes=90) <= now < close_ and self.scanner.prepared_for != today:
+        intraday_on = self.s.capital > 0
+        if intraday_on and open_ - timedelta(minutes=90) <= now < close_ and self.scanner.prepared_for != today:
             self._ensure_prepare(today)
         if open_ - timedelta(minutes=1) <= now <= close_ + timedelta(minutes=2):
             minute = now.replace(second=0, microsecond=0)
@@ -280,16 +308,35 @@ class Engine:
                 self._last_minute = minute
                 self._spawn(self._on_minute(now))
         scan_at = open_ + timedelta(minutes=5, seconds=10)  # ranks on the first 5-minute bar
-        if not self.scanned and scan_at <= now < close_ and now.time() < self.cfg.cutoff:
+        if intraday_on and not self.scanned and scan_at <= now < close_ and now.time() < self.cfg.cutoff:
             self.scanned = True
             self._spawn(self._scan(today))
         if open_ <= now < close_:
             if open_ + timedelta(seconds=5) <= now:
                 self._cancel_server_stops_at_open()
             self._evaluate(now)
+        if self.swing and not self.swing.busy:
+            if self._swing_prep_day != today and open_ - timedelta(minutes=75) <= now < close_ - timedelta(minutes=70):
+                self._swing_prep_day = today
+                self._spawn(self._swing_prepare(today))
+            elif (self._swing_trade_day != today and self.swing.model.get("for_day") == today.isoformat()
+                  and open_ + timedelta(minutes=6) <= now < close_ - timedelta(minutes=70)):
+                self._swing_trade_day = today
+                self._spawn(self.swing.rebalance(today, self._swing_cash, self.risk.allow_order))
+        if self.scalp:
+            if self._scalp_prep_day != today and open_ - timedelta(minutes=60) <= now < close_:
+                self._scalp_prep_day = today
+                self._spawn(self.scalp.prepare(today))
+            if open_ <= now < close_ - timedelta(minutes=3):
+                self.scalp.evaluate(now, open_, self._spawn)
+        if time_module.monotonic() - self._macro_ext_at > 600:
+            self._macro_ext_at = time_module.monotonic()
+            self._spawn(self._refresh_macro_ext())
         if not self.eod_done and now >= close_ - timedelta(minutes=3) and now < close_ + timedelta(minutes=1):
             self.eod_done = True
             self._spawn(self._eod())
+            if self.scalp:
+                self._spawn(self.scalp.eod())
         if isinstance(self.broker, PaperBroker):
             self.broker.on_quote()
 
@@ -312,7 +359,7 @@ class Engine:
             await self._ensure_prepare(today)
         cands = await self.scanner.scan(today)
         for c in cands:
-            if c.symbol in self.positions:
+            if c.symbol in self.positions or (self.swing and c.symbol in self.swing.holdings):
                 continue
             self.setups[c.symbol] = Setup(c.symbol, atr=c.atr14, rvol=c.rvol, prev_close=c.prev_close, sma50=c.sma50)
         self._update_subscriptions()
@@ -322,9 +369,10 @@ class Engine:
     def _update_subscriptions(self) -> None:
         live_setups = {s for s, st in self.setups.items() if st.state in ("WAIT_OR", "ARMED", "ENTERING")}
         active = live_setups | set(self.positions)
-        self.stream.set_symbols(trades=set(MACRO) | active, books=active)
         regime_syms = {"none": set(), "qqq_vwap": {"QQQ"}, "qqq_green": {"QQQ"}, "risk_on": {"QQQ", "VIXY"}}[self.cfg.regime]
-        self.market.bar_symbols = active | regime_syms
+        scalp_syms = set(SCALP_SYMBOLS) if self.scalp else set()
+        self.stream.set_symbols(trades=set(MACRO) | active | scalp_syms, books=active | ({"SOXL", "SOXS"} if self.scalp else set()))
+        self.market.bar_symbols = active | regime_syms | ({"SOXL"} if self.scalp else set())
 
     async def _load_prev_closes(self) -> None:
         for sym in MACRO:
@@ -335,6 +383,41 @@ class Engine:
                     self.prev_close[sym] = float(closes[0]["closePrice"])
             except TossAPIError:
                 pass
+
+    # ── swing sleeve ──────────────────────────────────────────────────────
+    async def _swing_prepare(self, today: date) -> None:
+        try:
+            await self.swing.prepare(today)
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"swing model failed: {exc!r}", logging.ERROR)
+            self._swing_prep_day = None  # retry on a later tick
+            await asyncio.sleep(120)
+
+    async def _swing_prices(self, symbols: list[str]) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for i in range(0, len(symbols), 20):
+            try:
+                for row in await self.toss.prices(symbols[i : i + 20]):
+                    px = float(row["lastPrice"])
+                    if px > 0:
+                        out[row["symbol"]] = px
+                        st = self.market.get(row["symbol"])
+                        st.last, st.last_ts = px, datetime.now(ET)
+            except TossAPIError as exc:
+                self.log(f"price lookup failed: {exc}", logging.WARNING)
+        return out
+
+    async def _swing_cash(self) -> float:
+        try:
+            return await self.broker.cash()
+        except TossAPIError:
+            return 0.0
+
+    async def _refresh_macro_ext(self) -> None:
+        try:
+            self.macro_ext = await asyncio.to_thread(macro_snapshot)
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"macro refresh failed: {exc!r}", logging.WARNING)
 
     # ── per-minute work ───────────────────────────────────────────────────
     async def _on_minute(self, now: datetime) -> None:
@@ -359,6 +442,8 @@ class Engine:
                 if bar.end.isoformat() > max(pos.last_bar_end, pos.opened):
                     update_trail(self.cfg, pos, bar.high)
                     pos.last_bar_end = bar.end.isoformat()
+        if self.scalp and self.session:
+            self.scalp.on_minute(now, self.session["open"])
         self._update_macro()
         self.risk.check_daily_loss(self.equity())
         self._save()
@@ -555,6 +640,14 @@ class Engine:
 
     # ── fills ─────────────────────────────────────────────────────────────
     def _on_fill(self, order: Order, qty: float, price: float) -> None:
+        if order.tag.startswith("scalp"):
+            if self.scalp:
+                self.scalp.on_fill(order, qty, price)
+            return
+        if order.tag.startswith("swing"):
+            if self.swing:
+                self.swing.on_fill(order, qty, price)
+            return
         pos = self.positions.get(order.symbol)
         if order.side == "BUY":
             if pos is None:
@@ -638,6 +731,10 @@ class Engine:
         self.paused = True
         for pos in list(self.positions.values()):
             await self._exit(pos, "manual")
+        if self.scalp and self.scalp.st.qty > 0:
+            await self.scalp._exit("manual")
+        if self.scalp and self.scalp.pre:
+            await self.scalp.pre.exit_now("manual")
 
     def snapshot(self) -> dict[str, Any]:
         now = datetime.now(ET)
@@ -667,4 +764,40 @@ class Engine:
             "events": list(self.events)[-150:],
             "config": self.cfg.__dict__,
             "warnings": self.warnings,
+            "swing": self.swing.snapshot() if self.swing else {"enabled": False},
+            "scalp": self.scalp.snapshot() if self.scalp else {"enabled": False},
+            "macro_ext": self.macro_ext,
         }
+
+
+def macro_snapshot() -> dict:
+    """Futures, volatility and rates (Yahoo + FRED), with simple risk flags. Runs in a thread."""
+    start = (datetime.now() - timedelta(days=130)).date().isoformat()
+    out: dict = {"quotes": {}, "flags": []}
+    for sym, label in macro_data.YAHOO_SYMBOLS.items():
+        try:
+            c = macro_data.yahoo(sym, start)["close"]
+            out["quotes"][sym] = {"label": label, "last": float(c.iloc[-1]), "chg": float(c.iloc[-1] / c.iloc[-2] - 1),
+                                  "chg_1m": float(c.iloc[-1] / c.iloc[-22] - 1) if len(c) > 22 else None}
+        except Exception:  # noqa: BLE001
+            continue
+    rates = {}
+    for sid in ("DGS10", "DGS2", "BAMLH0A0HYM2"):
+        try:
+            rates[sid] = macro_data.fred(sid, start)
+        except Exception:  # noqa: BLE001
+            continue
+    for sid, ser in rates.items():
+        out["quotes"][sid] = {"label": macro_data.FRED_SERIES[sid], "last": float(ser.iloc[-1]),
+                              "chg_3m_bp": float((ser.iloc[-1] - ser.iloc[-64]) * 100) if len(ser) > 64 else None}
+    q = out["quotes"]
+    if "DGS10" in rates and len(rates["DGS10"]) > 64 and rates["DGS10"].iloc[-1] - rates["DGS10"].iloc[-64] > 0.5:
+        out["flags"].append("10y yield up >50bp in 3 months (historically a mild headwind, semis weaker)")
+    if "^VIX" in q and "^VIX3M" in q and q["^VIX"]["last"] > q["^VIX3M"]["last"]:
+        out["flags"].append("VIX above 3-month VIX (stress / backwardation)")
+    if "BAMLH0A0HYM2" in rates and len(rates["BAMLH0A0HYM2"]) > 22 and rates["BAMLH0A0HYM2"].iloc[-1] - rates["BAMLH0A0HYM2"].iloc[-22] > 0.5:
+        out["flags"].append("High-yield spreads +50bp in a month (credit stress)")
+    if "DX-Y.NYB" in q and (q["DX-Y.NYB"].get("chg_1m") or 0) > 0.03:
+        out["flags"].append("Dollar up >3% in a month (semis headwind)")
+    out["updated"] = datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")
+    return out

@@ -3,6 +3,9 @@ import Panel from "./components/Panel";
 import Table from "./components/Table";
 import MacroGrid from "./components/MacroGrid";
 import EventLog from "./components/EventLog";
+import SwingPanel from "./components/SwingPanel";
+import MacroExt from "./components/MacroExt";
+import ScalpPanel from "./components/ScalpPanel";
 import { money, num, pct, signClass } from "./format";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -173,11 +176,11 @@ export default function App() {
       )}
 
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Equity" value={money(s.equity)} />
+        <Stat label="Intraday equity" value={money(s.equity)} />
         <Stat label="Day P&L" value={money(s.day_pnl)} cls={signClass(s.day_pnl)} />
         <Stat label="Realized" value={money(s.realized_pnl)} cls={signClass(s.realized_pnl)} />
         <Stat label="Unrealized" value={money(s.unrealized_pnl)} cls={signClass(s.unrealized_pnl)} />
-        <Stat label="Positions" value={`${s.positions?.length ?? 0}`} />
+        <Stat label="Swing equity" value={s.swing?.enabled ? money(s.swing.equity) : "off"} />
         <Stat label="Orders today" value={`${s.risk?.orders_today ?? 0}`} />
       </div>
 
@@ -211,7 +214,18 @@ export default function App() {
       </div>
 
       <div className="mb-4 grid gap-4 xl:grid-cols-2">
-        <Panel title="Positions" right={`${s.positions?.length ?? 0} open`}>
+        <SwingPanel swing={s.swing} />
+        <MacroExt macro={s.macro_ext} risk={s.swing?.risk} />
+      </div>
+
+      {s.scalp?.enabled && (
+        <div className="mb-4">
+          <ScalpPanel scalp={s.scalp} />
+        </div>
+      )}
+
+      <div className="mb-4 grid gap-4 xl:grid-cols-2">
+        <Panel title="Intraday positions" right={`${s.positions?.length ?? 0} open`}>
           <Table columns={positionCols} rows={s.positions ?? []} empty="No open positions" />
         </Panel>
         <Panel title="Stocks in play" right={`${s.setups?.length ?? 0} candidates`}>

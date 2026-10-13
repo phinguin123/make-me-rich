@@ -30,7 +30,7 @@ TOKEN_CACHE = DATA_DIR / ".toss_token.json"
 
 # Documented TPS per group, used at ~80% to leave headroom.
 GROUP_TPS = {
-    "AUTH": 5, "ACCOUNT": 1, "ASSET": 5, "STOCK": 5, "STOCK_ALL": 1, "MARKET_INFO": 3,
+    "AUTH": 5, "ACCOUNT": 1, "ASSET": 5, "STOCK": 5, "STOCK_ALL": 1, "STOCK_TRADING_TREND": 10, "MARKET_INFO": 3,
     "MARKET_DATA": 15, "MARKET_DATA_CHART": 20, "RANKING": 5, "ORDER": 10,
     "ORDER_HISTORY": 5, "ORDER_INFO": 6, "CONDITIONAL_ORDER": 5, "CONDITIONAL_ORDER_HISTORY": 10,
 }
@@ -232,19 +232,24 @@ class TossClient:
         self,
         symbol: str,
         side: str,
-        quantity: float,
+        quantity: float | None,
         order_type: str = "LIMIT",
         price: float | None = None,
         client_order_id: str | None = None,
         time_in_force: str = "DAY",
+        order_amount: float | None = None,
     ) -> dict:
-        body: dict[str, Any] = {
-            "symbol": symbol,
-            "side": side,
-            "orderType": order_type,
-            "quantity": str(quantity) if order_type == "MARKET" and side == "SELL" else str(int(quantity)),
-            "timeInForce": time_in_force,
-        }
+        """Quantity-based order, or amount-based (`order_amount`, US MARKET only, regular hours
+        until one hour before the close). Fractional quantities are allowed for MARKET sells."""
+        body: dict[str, Any] = {"symbol": symbol, "side": side, "orderType": order_type}
+        if order_amount is not None:
+            body["orderAmount"] = f"{order_amount:.2f}"
+        elif order_type == "MARKET" and side == "SELL":
+            body["quantity"] = f"{quantity:.6f}".rstrip("0").rstrip(".")
+            body["timeInForce"] = time_in_force
+        else:
+            body["quantity"] = str(int(quantity))  # type: ignore[arg-type]
+            body["timeInForce"] = time_in_force
         if order_type == "LIMIT":
             body["price"] = us_price(float(price))  # type: ignore[arg-type]
         if client_order_id:

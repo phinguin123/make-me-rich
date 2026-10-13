@@ -66,6 +66,10 @@ class Broker:
     async def submit(self, symbol: str, side: str, qty: float, limit: float | None, tag: str) -> Order:
         raise NotImplementedError
 
+    async def submit_amount(self, symbol: str, amount: float, tag: str) -> Order:
+        """Dollar-amount market buy (fractional shares)."""
+        raise NotImplementedError
+
     async def cancel(self, order: Order) -> None:
         raise NotImplementedError
 
@@ -119,6 +123,19 @@ class PaperBroker(Broker):
             o._reserved = need  # type: ignore[attr-defined]
         self.orders[o.id] = o
         self.try_fill(o)
+        return o
+
+    async def submit_amount(self, symbol: str, amount: float, tag: str) -> Order:
+        o = Order(id=f"paper-{uuid.uuid4().hex[:10]}", client_id=client_order_id(symbol, tag), symbol=symbol, side="BUY", qty=0.0, limit=None, tag=tag)
+        self.orders[o.id] = o
+        px = self.market.get(symbol).ask or self.market.get(symbol).last
+        if not px or amount > self._cash + 1e-6:
+            o.status, o.error = "REJECTED", "no price" if not px else "insufficient-buying-power"
+            return o
+        o.qty = amount / (px * (1 + self.commission))
+        o._reserved = amount  # type: ignore[attr-defined]
+        self._cash -= amount
+        self._fill(o, px)
         return o
 
     def try_fill(self, o: Order) -> None:
@@ -186,6 +203,19 @@ class TossBroker(Broker):
             o.status, o.error = "REJECTED", exc.code
             o.id = f"rejected-{cid}"
             LOG.error("Order rejected %s %s x%s: %s", side, symbol, qty, exc)
+        self.orders[o.id] = o
+        return o
+
+    async def submit_amount(self, symbol: str, amount: float, tag: str) -> Order:
+        cid = client_order_id(symbol, tag)
+        o = Order(id="", client_id=cid, symbol=symbol, side="BUY", qty=0.0, limit=None, tag=tag)
+        try:
+            res = await self.client.create_order(symbol, "BUY", None, "MARKET", None, cid, order_amount=amount)
+            o.id = res.get("orderId", "")
+            LOG.info("LIVE BUY %s $%.2f (amount) [%s] -> %s", symbol, amount, tag, o.id[:12])
+        except TossAPIError as exc:
+            o.status, o.error, o.id = "REJECTED", exc.code, f"rejected-{cid}"
+            LOG.error("Amount order rejected %s $%.2f: %s", symbol, amount, exc)
         self.orders[o.id] = o
         return o
 

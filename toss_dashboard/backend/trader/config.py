@@ -46,6 +46,17 @@ class Settings:
     mode: str = field(default_factory=lambda: _env("TRADER_MODE", "paper").lower())
     # Capital the bot may use (USD). It never uses more than Toss cash buying power.
     capital: float = field(default_factory=lambda: _float("TRADER_CAPITAL", 3000.0))
+    # Swing sleeve (monthly momentum, weeks-to-months holds). 0 disables it.
+    swing_capital: float = field(default_factory=lambda: _float("TRADER_SWING_CAPITAL", 0.0))
+    swing_hedge: str = field(default_factory=lambda: _env("TRADER_SWING_HEDGE", "none").lower())  # none | soxs_broad
+    # SOXL/SOXS scalp sleeve (regime-gated opening-range breakout). 0 disables it.
+    scalp_capital: float = field(default_factory=lambda: _float("TRADER_SCALP_CAPITAL", 0.0))
+    # Share of the scalp sleeve per trade: 0.5 validated (-19% max DD); 1.0 doubles return and drawdown.
+    scalp_position_frac: float = field(default_factory=lambda: _float("TRADER_SCALP_POSITION_FRAC", 0.5))
+    # One-day override (ET date, YYYY-MM-DD): trade that session even when the regime says stand aside.
+    scalp_force_day: str = field(default_factory=lambda: _env("TRADER_SCALP_FORCE_DAY"))
+    # Pre-market edge of the scalp sleeve (SOXL dips below the pre-market VWAP, 07:00-09:25 ET). 0 disables it.
+    scalp_pre: bool = field(default_factory=lambda: _env("TRADER_SCALP_PRE", "1") != "0")
 
     # Risk
     risk_per_trade: float = field(default_factory=lambda: _float("TRADER_RISK_PER_TRADE", 0.01))

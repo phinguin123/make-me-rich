@@ -1,0 +1,145 @@
+import asyncio
+from datetime import date, datetime, timedelta
+
+import pytest
+
+from trader.broker import PaperBroker
+from trader.config import Settings
+from trader.market import ET, Bar, MarketData
+from trader.scalp import ScalpSleeve
+
+TODAY = datetime.now(ET).date()
+OPEN = datetime.combine(TODAY, datetime.min.time()).replace(hour=9, minute=30, tzinfo=ET)
+
+
+class FakeToss:
+    def __init__(self, closes):
+        self.closes = closes  # newest first, all before today
+
+    async def candles(self, symbol, interval, count=200, before=None):
+        days = [TODAY - timedelta(days=i + 1) for i in range(len(self.closes))]
+        return {"candles": [{"timestamp": f"{d.isoformat()}T00:00:00-04:00", "closePrice": str(c)} for d, c in zip(days, self.closes)]}
+
+
+def make(tmp_path, closes):
+    md = MarketData(client=None)
+    s = Settings(mode="paper", capital=0.0, swing_capital=0.0, scalp_capital=2000.0)
+    broker = PaperBroker(md, 0.001, 2000.0)
+    sleeve = ScalpSleeve(s, broker, md, FakeToss(closes), lambda urgent: True, lambda msg, lvl=20: None)
+    sleeve.path = tmp_path / "scalp.json"
+    broker.on_fill = lambda o, q, px: sleeve.on_fill(o, q, px)
+    return sleeve, md
+
+
+def quote(md, sym, px):
+    st = md.get(sym)
+    st.last, st.last_ts, st.bid, st.ask = px, datetime.now(ET), px - 0.01, px + 0.01
+
+
+def opening_range(md, low=100.0, high=104.0):
+    st = md.get("SOXL")
+    for k in range(1, 31):
+        end = OPEN + timedelta(minutes=k)
+        st.bars[end] = Bar(end, 102, high if k == 10 else 102.5, low if k == 20 else 101.5, 102, 1000)
+
+
+def run(sleeve, now):
+    tasks = []
+    sleeve.evaluate(now, OPEN, tasks.append)
+
+    async def go():
+        for t in tasks:
+            await t
+
+    asyncio.run(go())
+
+
+def test_bull_regime_stands_aside(tmp_path):
+    sleeve, md = make(tmp_path, [110] + [100] * 49)  # SOXX above its 50-day average
+    asyncio.run(sleeve.prepare(TODAY))
+    assert sleeve.st.regime == "bull" and sleeve.st.status == "standing_aside"
+    opening_range(md)
+    sleeve.on_minute(OPEN + timedelta(minutes=31), OPEN)
+    quote(md, "SOXL", 110)
+    run(sleeve, OPEN + timedelta(minutes=40))
+    assert sleeve.st.qty == 0
+
+
+def test_bear_up_break_buys_soxl_then_stops_out(tmp_path):
+    sleeve, md = make(tmp_path, [90] + [100] * 49)
+    asyncio.run(sleeve.prepare(TODAY))
+    assert sleeve.st.regime == "bear"
+    opening_range(md)
+    sleeve.on_minute(OPEN + timedelta(minutes=31), OPEN)
+    assert sleeve.st.status == "armed" and sleeve.st.or_high == 104 and sleeve.st.or_low == 100
+    quote(md, "SOXL", 104.2)
+    run(sleeve, OPEN + timedelta(minutes=35))
+    assert sleeve.st.side == "SOXL" and sleeve.st.qty == pytest.approx(9)  # 50% of $2,000 at ~$104
+    quote(md, "SOXL", 99.9)  # back below the range low -> stop
+    run(sleeve, OPEN + timedelta(minutes=60))
+    assert sleeve.st.qty == 0 and sleeve.st.status == "done"
+    assert sleeve.st.trades[-1]["reason"] == "stop" and sleeve.realized < 0
+
+
+def test_bear_down_break_buys_soxs(tmp_path):
+    sleeve, md = make(tmp_path, [90] + [100] * 49)
+    asyncio.run(sleeve.prepare(TODAY))
+    opening_range(md)
+    sleeve.on_minute(OPEN + timedelta(minutes=31), OPEN)
+    quote(md, "SOXL", 99.5)
+    quote(md, "SOXS", 40.0)
+    run(sleeve, OPEN + timedelta(minutes=33))
+    assert sleeve.st.side == "SOXS" and sleeve.st.qty == pytest.approx(24)
+    asyncio.run(sleeve.eod())
+    assert sleeve.st.qty == 0 and sleeve.st.trades[-1]["reason"] == "close"
+
+
+def test_no_entry_after_cutoff(tmp_path):
+    sleeve, md = make(tmp_path, [90] + [100] * 49)
+    asyncio.run(sleeve.prepare(TODAY))
+    opening_range(md)
+    sleeve.on_minute(OPEN + timedelta(minutes=31), OPEN)
+    quote(md, "SOXL", 105)
+    run(sleeve, OPEN + timedelta(minutes=121))
+    assert sleeve.st.qty == 0 and sleeve.st.status == "done"
+
+
+def test_carried_position_is_sold_next_open(tmp_path):
+    sleeve, md = make(tmp_path, [90] + [100] * 49)
+    sleeve.st.day, sleeve.st.side, sleeve.st.qty, sleeve.st.entry = (TODAY - timedelta(days=1)).isoformat(), "SOXS", 10.0, 40.0
+    sleeve.cash = 1600.0
+    asyncio.run(sleeve.prepare(TODAY))
+    assert sleeve.st.status == "exit_pending" and sleeve.st.qty == 10
+    quote(md, "SOXS", 41.0)
+    run(sleeve, OPEN + timedelta(minutes=1))
+    assert sleeve.st.qty == 0 and sleeve.st.trades[-1]["reason"] == "carry"
+
+
+def test_pause_blocks_entries_but_not_exits(tmp_path):
+    sleeve, md = make(tmp_path, [90] + [100] * 49)
+    paused = {"on": True}
+    sleeve.entries_blocked = lambda: paused["on"]
+    asyncio.run(sleeve.prepare(TODAY))
+    opening_range(md)
+    sleeve.on_minute(OPEN + timedelta(minutes=31), OPEN)
+    quote(md, "SOXL", 104.2)
+    run(sleeve, OPEN + timedelta(minutes=35))
+    assert sleeve.st.qty == 0 and sleeve.st.status == "armed"  # paused: no entry, still watching
+    paused["on"] = False
+    run(sleeve, OPEN + timedelta(minutes=36))
+    assert sleeve.st.side == "SOXL" and sleeve.st.qty > 0
+    paused["on"] = True
+    quote(md, "SOXL", 99.0)
+    run(sleeve, OPEN + timedelta(minutes=50))
+    assert sleeve.st.qty == 0  # exits still work while paused
+
+
+def test_one_day_override_trades_in_uptrend(tmp_path):
+    sleeve, md = make(tmp_path, [110] + [100] * 49)
+    sleeve.s = Settings(mode="paper", scalp_capital=2000.0, scalp_force_day=TODAY.isoformat())
+    asyncio.run(sleeve.prepare(TODAY))
+    assert sleeve.st.regime == "bull" and sleeve.st.status == "waiting"
+    sleeve.s = Settings(mode="paper", scalp_capital=2000.0, scalp_force_day=(TODAY - timedelta(days=1)).isoformat())
+    sleeve.st.day = ""
+    asyncio.run(sleeve.prepare(TODAY))
+    assert sleeve.st.status == "standing_aside"  # override for another day has no effect

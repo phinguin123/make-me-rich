@@ -7,7 +7,8 @@ Validated in trader/research/scalp.py (2021-2026, 1-minute SIP, Toss costs):
   - entries until 11:30 ET, one trade per day
   - stop: SOXL back through the opposite side of the opening range; otherwise exit at the close
   - bear-regime result: +0.32%/trade after costs (IS +0.34%, OOS +0.30%), ~88 trades/yr
-The pre-market runs a different, mean-reversion edge (trader/scalp_pre.py). The Korean-hours day
+The pre-market runs a different, mean-reversion edge (trader/scalp_pre.py); on days this breakout may trade,
+the book is flat by 09:59 so the breakout has the whole pot. The Korean-hours day
 market showed no edge after costs and is not traded.
 """
 from __future__ import annotations
@@ -163,6 +164,13 @@ class ScalpSleeve:
         self.log(f"Scalp regime {self.st.regime}: SOXX {self.st.soxx_close:.2f} vs {self.cfg.regime_ma}-day avg {self.st.soxx_ma:.2f}", logging.INFO)
         jr("D", "orb", "regime", {"soxx": self.st.soxx_close, "ma": self.st.soxx_ma, "regime": self.st.regime, "status": self.st.status})
         self.save()
+
+    def orb_may_trade(self, today: date) -> bool:
+        """Whether the breakout may still buy today. The pre-market book then sells its leftovers at 09:59 instead
+        of 10:30, so the breakout has the pot from 10:00. A regime not loaded yet counts as yes."""
+        if self.st.day != today.isoformat() or self.st.regime == "unknown":
+            return True
+        return self.st.status in ("waiting", "armed")
 
     # ── scheduling (the engine calls this every tick on trading days; the replay check does too) ──
     def tick(self, now: datetime, session: dict, pre_session: dict | None, spawn: Callable) -> None:

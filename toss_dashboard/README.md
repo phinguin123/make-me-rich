@@ -18,8 +18,8 @@ DD, against −22% for 30/70, for only 2–6 months less time to $100k. Backtest
 the corrected ones (2021-01 to 2026-10, yearly rebalance).
 
 - **Timing (KST, US summer time):**
-  - Pre-market dip book (14 names, 3 slots, QQQ filter): watches from 17:00, buys 17:30–22:00, out by
-    22:25.
+  - Pre-market dip book (14 names, 3 slots, QQQ filter): watches from 17:00, buys 17:30–22:00. What
+    hasn't hit its take-profit is sold at 23:30, or at 22:59 on days the breakout may trade.
   - Breakout: 22:30–04:57, only in semis downtrends, never held overnight.
   - Swing: trades at 22:36 on rebalance days.
 - **Adding or removing money:** after you deposit or withdraw in Toss, use **Add to bot / Take
@@ -232,8 +232,8 @@ Toss bars since Nov 2025. The day market used Toss bars since Nov 2025 and Samsu
 - The dip size is 0.4 × SOXL's 20-day daily volatility, kept between 1.5% and 6% (about 3% in 2026).
 - From 04:30 to 09:00 ET (17:30–22:00 KST; 07:00 until 2026-10-13), when SOXL trades that far
   below its pre-market VWAP, the sleeve places a limit buy at that level. The order rests for up to 10 minutes. The sleeve never chases.
-- A resting take-profit sells at entry + dip. Otherwise the position is sold at 09:25 ET with
-  limit orders. If that fails, it's sold at market after the open.
+- A resting take-profit sells at entry + dip. Otherwise the position is sold at market at 10:30 ET
+  (09:59 on breakout days; 09:25 with limit orders until 2026-10-14).
 - One trade a day, 50% of the sleeve. It trades in uptrends and downtrends alike.
 
 **Results:**
@@ -270,7 +270,8 @@ ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024)
 liquid in the pre-market and have no 24-hour futures anchor.
 
 **Same rule per name:** 0.4σ of its own volatility below its pre-market VWAP, a 0.3% trade-through,
-take profit at +dip, out by 09:25 ET.
+take profit at +dip. Leftovers are sold at 10:30 ET, or at 09:59 on days the breakout may trade (SOXX
+below its 50-day average, or its regime not loaded yet) so the breakout has the pot from 10:00.
 
 **Shared limits:**
 - At most 3 positions at once, each a third of the scalp pot. Signals are taken in time order, one
@@ -310,12 +311,36 @@ VWAP bug fix, had suggested 07:00 ET. On the book (3 slots, QQQ filter), by star
 
 - The earlier start is better in both halves of the sample.
 - Buys after 09:00 ET (22:00–22:20 KST) lose: −0.4% to −1.1% per trade, too close to the 09:25
-  exit. That's why the cutoff stays.
+  exit. That's why the cutoff stays. (Re-checked with the 10:30 exit: +0.4–0.5% per trade with fair
+  fills and about 0 with strict fills, against +1.0–1.2% for earlier buys. The cutoff still stays.)
 - With the earlier start: scalp at 100% is Sharpe 1.34; 30/70 is +36.6%/yr, Sharpe 1.69, max DD
   −16.6%, still the best mix.
 - Edge-monitor expectation: +0.75% per trade, about 119 trades a year.
 
+**Exit time (re-tested 2026-10-14, `research/open_flush.py`).** The book used to sell leftovers at
+09:25 ET, in the thinnest market of the day, five minutes before the open's liquidity. On the book
+(3 slots, QQQ filter), by exit time:
+
+| Leftovers sold at | Reactive fills | Strict fills |
+|---|---|---|
+| 09:25 ET / 22:25 KST (before) | +38.0%/yr, Sharpe 3.69, max DD −14% | +28.5%, 2.84, −20% |
+| 10:00 / 23:00 | +45.2%, 3.89, −14% | +35.7%, 3.15, −16% |
+| **10:30 / 23:30 (live)** | **+49.7%, 4.09, −14%** | **+40.3%, 3.41, −16%** |
+| 11:00 / 24:00 | +50.7%, 4.11, −11% | +41.5%, 3.45, −13% |
+
+- 10:30 is better in both halves with both fill models; the gain flattens out after it.
+- The cost: a trade still open at the exit loses more (about −2% vs −0.6%), but fewer trades end
+  that way (17% vs 35%).
+- On days the breakout may trade, leftovers go at 09:59 so the breakout has the pot from 10:00.
+- 30/70 stays: +40.2%/yr, Sharpe 1.81, max DD −16.6%, 1-in-20 bad year +5.5% (35/65 ties at 1.82).
+- Edge-monitor expectation: +0.96% per trade, about 119 trades a year.
+
 **Tested and rejected:**
+- **Buying the flush after the open** (09:30–10:00 ET, e.g. SOXL on 2026-10-13: 118.40 open, 115.84 at
+  09:32, 123.90 at 10:15): 0.4σ below the pre-market VWAP or below the open, exits 10:00–15:55, with or
+  without stops. About 3,800 trades on the 14 names: −0.2% to −0.7% per trade in every variant, both
+  halves, bull and bear. SOXL alone wins 45–51%. A 6% low-to-high swing exists in SOXL's first hour on
+  13% of days, but only in hindsight: after a flush like that, it fell another 5%+ on 1 in 10 days.
 - **News filter** (Alpaca news, 825 signals): dips with fresh news did no worse. In a QQQ uptrend,
   3+ news items averaged +0.91% per trade (84% win) against +0.64% with none.
 - **After-hours dips** (16:00–20:00 ET): strict-fill results were flat or negative; SOXS lost 1.8%

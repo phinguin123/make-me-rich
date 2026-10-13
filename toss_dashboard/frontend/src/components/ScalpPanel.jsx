@@ -22,7 +22,7 @@ function PreMarket({ pre }) {
   return (
     <div className="border-b border-zinc-900 px-3 py-2 text-xs">
       <div className="mb-1 flex flex-wrap justify-between gap-2 text-[11px] text-zinc-500">
-        <span className="uppercase tracking-wide">Pre-market dip book · {rows.length} names · entries 04:30–09:00 ET, out by 09:25</span>
+        <span className="uppercase tracking-wide">Pre-market dip book · {rows.length} names · entries 04:30–09:00 ET, out by 10:30 (09:59 on breakout days)</span>
         <span>
           slots {pre.used ?? 0}/{pre.slots ?? 3} ·{" "}
           {r.ok === false ? <span className="text-amber-300">QQQ below 200-day: standing aside</span> : r.qqq ? `QQQ ${num(r.qqq)} > 200d ${num(r.ma200)}` : "QQQ filter pending"}

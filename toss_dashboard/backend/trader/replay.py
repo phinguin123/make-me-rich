@@ -11,7 +11,8 @@ A change that passes the unit tests but trades differently (wrong side, window, 
 that blocks real trades, an exception) shows up as a parity drop, and the deploy is refused.
 
 Inside each minute the price walks open -> low -> high -> close (open -> high -> low -> close on down
-bars) in steps of ~0.25% during the minutes that matter (04:25-09:30 ET near a name's level, 09:59-16:00 for SOXL/SOXS), like a live
+bars) in steps of ~0.25% during the minutes that matter (04:25-09:30 ET near a name's level, until 10:32 while a
+name holds a position, 09:59-16:00 for SOXL/SOXS), like a live
 stream crossing levels; elsewhere one tick per minute. bid/ask = price -/+ 1 cent. Fills follow the
 research's rule: a buy priced at or above the ask (marketable) fills at the ask, a resting buy fills
 at its limit only when the price trades 0.3% through it (and a resting sell 0.05% through its limit).
@@ -216,15 +217,15 @@ async def replay_day(d: pd.Timestamp, m: dict, pm: dict, daily: dict, tmp: Path)
         if soxl is not None and 331 <= k <= 720 and np.isfinite(soxl[3][k - 1]):  # the bar that just closed (end-stamped)
             md.get("SOXL").bars[t0] = Bar(t0, soxl[0][k - 1], soxl[1][k - 1], soxl[2][k - 1], soxl[3][k - 1], soxl[4][k - 1])
             await run(t0 + timedelta(seconds=3), lambda sp: sleeve.on_minute(t0 + timedelta(seconds=3), session["open"]))
-        movers = list(fr) if k < 330 else [x for x in ("SOXL", "SOXS") if x in fr]
+        movers = [x for x in fr if k < 330 or x in ("SOXL", "SOXS") or (x in sleeve.pre.names and sleeve.pre.names[x].active())]
         pts = {}
         for sym in movers:
             o, h, l, c = (fr[sym][i][k] for i in range(4))
             if not np.isfinite(h):
                 continue
             nm = sleeve.pre.names.get(sym)
-            near = nm is not None and (nm.active() or (nm.st.level > 0 and l <= nm.st.level * 1.01))  # only where levels matter
-            fine = (25 <= k < 330 and near) or (359 <= k <= 720 and sym in ("SOXL", "SOXS"))
+            near = nm is not None and (nm.active() or (k < 330 and nm.st.level > 0 and l <= nm.st.level * 1.01))  # only where levels matter
+            fine = (25 <= k <= 392 and near) or (359 <= k <= 720 and sym in ("SOXL", "SOXS"))
             up = c >= o
             pts[sym] = path((o, l, h, c) if up else (o, h, l, c)) if fine and np.isfinite(o) else [c]
         steps = max((len(p) for p in pts.values()), default=1)
@@ -242,9 +243,10 @@ async def replay_day(d: pd.Timestamp, m: dict, pm: dict, daily: dict, tmp: Path)
             "refused": refused, "errors": errors}
 
 
-def research_pre(pm: dict, up: pd.Series) -> dict[tuple, float]:
-    """The book in the research: level fills, 3 slots in time order, QQQ filter -> {(date, sym): net}."""
-    t = all_trades(pm, "level")
+def research_pre(pm: dict, up: pd.Series, bear: pd.Series) -> dict[tuple, float]:
+    """The book in the research: level fills, 3 slots in time order, QQQ filter, leftovers sold at 10:30
+    (09:59 on breakout days, `bear`) -> {(date, sym): net}."""
+    t = all_trades(pm, "level", bear=bear)
     order = {sym: i for i, sym in enumerate(NAMES)}
     t["o"] = t["sym"].map(order)
     out = {}
@@ -291,7 +293,7 @@ def main() -> int:
         daily[sym] = M["close"][719]
     orb = R.e2_orb(m, days, 30, "opposite", 0.0)
     orb_r = orb[orb["regime"] == "bear"].set_index("date")
-    pre_r = research_pre({sym: pm[sym] for sym in NAMES if sym in pm}, up)
+    pre_r = research_pre({sym: pm[sym] for sym in NAMES if sym in pm}, up, m["regime"] == "bear")
     sample = days[60:]
     if args.gate:  # every research trade day in the last 2 years + every 10th other day
         recent = sample[sample >= sample[-1] - pd.Timedelta(days=2 * 365)]

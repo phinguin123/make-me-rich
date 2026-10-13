@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-13",
+  "generated": "2026-10-14",
   "edges": {
     "scalp-orb": {
       "label": "SOXL/SOXS opening-range breakout (bear regime)",
@@ -16,12 +16,12 @@
     "scalp-pre": {
       "label": "Pre-market dip book (14 names, 3 slots, QQQ filter)",
       "source": "research/pre_slots.py pessimistic",
-      "mean": 0.00754,
-      "std": 0.01861,
+      "mean": 0.00963,
+      "std": 0.02172,
       "n": 614,
       "per_year": 119.0,
-      "dd_reduce": -0.2049,
-      "dd_off": -0.3013,
+      "dd_reduce": -0.2214,
+      "dd_off": -0.3306,
       "period": "2021-08 .. 2026-10",
       "slip_model": 0.0
     }

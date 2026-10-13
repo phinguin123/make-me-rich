@@ -57,7 +57,7 @@ class Settings:
     scalp_position_frac: float = field(default_factory=lambda: _float("TRADER_SCALP_POSITION_FRAC", 0.5))
     # One-day override (ET date, YYYY-MM-DD): trade that session even when the regime says stand aside.
     scalp_force_day: str = field(default_factory=lambda: _env("TRADER_SCALP_FORCE_DAY"))
-    # Pre-market edge of the scalp sleeve (dips below the pre-market VWAP, buys 04:30-09:00 ET, out by 09:25). 0 disables it.
+    # Pre-market edge of the scalp sleeve (dips below the pre-market VWAP, buys 04:30-09:00 ET, out by 10:30). 0 disables it.
     scalp_pre: bool = field(default_factory=lambda: _env("TRADER_SCALP_PRE", "1") != "0")
     # Names of the pre-market dip book (research/pre_multi.py, pre_slots.py), its slots and the QQQ trend filter
     pre_names: tuple = field(default_factory=lambda: tuple(s.strip().upper() for s in _env(

@@ -14,6 +14,7 @@ from .pre_multi import matrices
 from .scalp_ext import D, ET, _dip_trade, net
 
 NAMES = ["SOXL", "SOXS", "NVDA", "MU", "AMD", "TSLA", "MSTR", "PLTR", "COIN", "META", "AAPL", "AMZN", "TSLL", "NVDL"]
+EXIT_M, EXIT_ORB_M = 390, 359  # leftovers sold at 10:30 ET; 09:59 on days the breakout may trade (live: scalp_pre.PreConfig)
 
 
 def qqq_up() -> pd.Series:
@@ -25,8 +26,22 @@ def qqq_up() -> pd.Series:
     return (c > c.rolling(200, min_periods=150).mean()).shift(1)
 
 
-def all_trades(mats: dict, model: str, e0: int = 30) -> pd.DataFrame:
-    """e0 = first entry minute after 04:00 ET (30 = 04:30, the live start; 180 = 07:00, the old one)."""
+def soxx_bear() -> pd.Series:
+    """Days the breakout may trade: SOXX's prior close below its 50-day average (as research/scalp.py)."""
+    q = pd.read_parquet(D / "alpaca_1m.parquet", columns=["symbol", "ts", "close"], filters=[("symbol", "==", "SOXX")])
+    q["et"] = q["ts"].dt.tz_convert(ET)
+    q = q[(q["et"].dt.hour * 60 + q["et"].dt.minute) <= 959]
+    c = q.groupby(q["et"].dt.tz_localize(None).dt.normalize())["close"].last()
+    return (c <= c.rolling(50, min_periods=30).mean()).shift(1).fillna(False).astype(bool)
+
+
+def all_trades(mats: dict, model: str, e0: int = 30, bear: pd.Series | None = None,
+               exit_m: int = EXIT_M, exit_orb: int = EXIT_ORB_M) -> pd.DataFrame:
+    """e0 = first entry minute after 04:00 ET (30 = 04:30, the live start; 180 = 07:00, the old one).
+    Leftovers are sold at minute exit_m (390 = 10:30), or exit_orb (359 = 09:59) on breakout days (`bear`,
+    by default soxx_bear()). exit_m = exit_orb = 325 is the old 09:25 exit."""
+    if bear is None and exit_m != exit_orb:
+        bear = soxx_bear()
     rows = []
     for sym in NAMES:
         M = mats[sym]
@@ -40,7 +55,9 @@ def all_trades(mats: dict, model: str, e0: int = 30) -> pd.DataFrame:
             first = np.flatnonzero(np.isfinite(lo[:60]))
             if not len(first):
                 continue
-            r = _dip_trade(c, lo, hi, np.nan_to_num(v), first[0], min(0.06, max(0.015, 0.4 * s)), model, e0=e0, detail=True)
+            flag = bear.get(d) if bear is not None else False
+            ex = exit_orb if (flag is True or flag == 1) else exit_m
+            r = _dip_trade(c, lo, hi, np.nan_to_num(v), first[0], min(0.06, max(0.015, 0.4 * s)), model, e0=e0, exit_i=ex, detail=True)
             if r is not None:
                 rows.append({"date": d, "sym": sym, "j": r[1], "q": r[2], "net": float(net([r[0]], "pre", limit=True)[0])})
     return pd.DataFrame(rows)

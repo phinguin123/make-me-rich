@@ -87,17 +87,58 @@ def test_dip_buys_at_level_and_takes_profit(tmp_path):
     assert sleeve.st.trades[-1]["reason"] == "pre target"
 
 
-def test_unfilled_target_sold_before_the_open(tmp_path):
-    sleeve, md, broker = make(tmp_path)
+def regime(sleeve, regime, status):
+    sleeve.st.day, sleeve.st.regime, sleeve.st.status = TODAY.isoformat(), regime, status
+
+
+def bought(sleeve, md):
     pre = ready(sleeve, md)
     quote(md, round(pre.level * 0.995, 2))
     tick(sleeve, at(7, 31, 10))
     assert pre.qty == 10
+    return pre
+
+
+def test_unfilled_target_held_through_the_open_and_sold_at_1030(tmp_path):
+    sleeve, md, broker = make(tmp_path)
+    regime(sleeve, "bull", "standing_aside")  # the breakout sits out: the book keeps the pot until 10:30
+    pre = bought(sleeve, md)
     quote(md, pre.level + 0.2)
-    tick(sleeve, at(9, 25, 1))
+    for h, m in ((9, 25), (9, 30), (10, 0), (10, 29)):
+        tick(sleeve, at(h, m, 1))
+        assert pre.qty == 10 and pre.status == "in_trade" and broker.open_orders()  # the take-profit keeps working
+    tick(sleeve, at(10, 30, 1))
     assert pre.qty == 0 and pre.status == "done"
-    assert sleeve.st.trades[-1]["reason"] == "pre close"
+    assert sleeve.st.trades[-1]["reason"] == "pre time"
     assert not broker.open_orders()  # take-profit was cancelled
+
+
+def test_target_can_fill_after_the_open(tmp_path):
+    sleeve, md, broker = make(tmp_path)
+    regime(sleeve, "bull", "standing_aside")
+    pre = bought(sleeve, md)
+    tick(sleeve, at(9, 45))
+    quote(md, pre.target + 0.05)
+    broker.on_quote()
+    assert pre.qty == 0 and sleeve.st.trades[-1]["reason"] == "pre target"
+
+
+def test_leftovers_sold_at_0959_when_the_breakout_may_trade(tmp_path):
+    sleeve, md, broker = make(tmp_path)
+    regime(sleeve, "bear", "waiting")
+    pre = bought(sleeve, md)
+    quote(md, pre.level + 0.2)
+    tick(sleeve, at(9, 58, 30))
+    assert pre.qty == 10
+    tick(sleeve, at(9, 59, 1))
+    assert pre.qty == 0 and sleeve.st.trades[-1]["reason"] == "pre time" and not broker.open_orders()
+    book = sleeve.pre
+    regime(sleeve, "unknown", "standing_aside")  # regime not loaded yet: assume the breakout may trade
+    assert book.exit_time(TODAY) == at(9, 59, 0)
+    regime(sleeve, "bear", "standing_aside")  # breakout switched off (edge monitor): hold to 10:30
+    assert book.exit_time(TODAY) == at(10, 30, 0)
+    sleeve.st.day = ""  # the breakout hasn't prepared today
+    assert book.exit_time(TODAY) == at(9, 59, 0)
 
 
 def test_no_entry_before_seven_when_paused_or_after_cutoff(tmp_path):

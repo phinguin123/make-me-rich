@@ -6,11 +6,16 @@ Validated in trader/research/scalp_ext.py, pre_multi.py, pre_slots.py (2021-2026
   - between 04:30 and 09:00 ET (17:30-22:00 KST in summer), when a name trades `dip` below its pre-market VWAP (dip = 0.4 x its
     20-day daily volatility, 1.5%-6%) and 0.3% through, buy with a limit order at that level: we provide
     liquidity to forced sellers in a thin market and never chase
-  - take profit with a resting sell limit at entry + dip; otherwise sell at 09:25 ET, before the open
+  - take profit with a resting sell limit at entry + dip (a DAY order: it keeps working through the open);
+    otherwise sell what's left at 10:30 ET with a market order. Selling at 09:25, in the thinnest market of the
+    day just before the open's liquidity, gave up the recovery: holding to 10:30 lifted the book from +38% to
+    +50%/yr (fair fills; strict +29% to +40%), better in both halves (research/open_flush.py, 2026-10-14).
+    On days the breakout may trade (SOXX below its 50-day average, or its regime not known yet) leftovers
+    are sold at 09:59 instead, so the breakout has the pot when it can first buy at 10:00.
   - at most 3 positions at once, each a third of the scalp pot; one trade per name per day
   - only while QQQ closed above its 200-day average (dip-buying lost in the 2022 bear market)
-  - book result on its own money (3 slots + QQQ filter): +21%/yr with strict fills (Sharpe 2.5, max DD -17%),
-    +29%/yr reacting like the live bot (Sharpe 3.3, max DD -10%); 2024-26 out of sample per trade +0.7% to +0.9%
+  - book result on its own money (3 slots + QQQ filter, 04:30 start, 10:30 exit): +40%/yr with strict fills
+    (Sharpe 3.4, max DD -16%), +50%/yr reacting like the live bot (Sharpe 4.1, max DD -14%)
   - SOXL alone, all 2021-2026 days:
     after Toss fees (corrected 2026-10-13): +1.05% if filled on a
     0.3% trade-through (198 trades, t 6.7), +0.78% reacting like the live bot (124, t 4.5), +0.35% if
@@ -50,7 +55,8 @@ ACTIVE = ("entry_open", "in_trade", "exiting", "exit_pending")
 class PreConfig:
     start: time = time(4, 30)  # entries allowed from (ET): 30 min after the pre-market opens (research: 17:30 KST beat 20:00)
     cutoff: time = time(9, 0)  # no new entries after
-    exit_at: time = time(9, 25)  # sell what's left before the regular open
+    exit_at: time = time(10, 30)  # sell what's left (holding through the open beat selling at 09:25)
+    exit_orb: time = time(9, 59)  # instead, on days the breakout may buy from 10:00 and needs the pot
     z: float = 0.4  # dip = z x 20-day daily volatility of SOXL
     min_dip: float = 0.015
     max_dip: float = 0.06
@@ -124,7 +130,7 @@ class PremarketDip:
             return
         start = max(self._at(today, self.cfg.start), pre["open"] + timedelta(minutes=30))
         cutoff = self._at(today, self.cfg.cutoff)
-        exit_at = min(self._at(today, self.cfg.exit_at), pre["close"] - timedelta(minutes=4))
+        exit_at = self.book.exit_time(today)
         if self.st.status == "entry_open":  # a resting entry: finished on a fill, when its time is up, or at the cutoff
             o = self.entry_order
             rest_over = bool(self.st.rest_until) and now >= datetime.fromisoformat(self.st.rest_until)
@@ -135,7 +141,7 @@ class PremarketDip:
         if self.st.qty > 0 and (now >= exit_at or self.st.status == "exit_pending"):
             if self.st.status != "exiting" and (self._exit_after is None or now >= self._exit_after):
                 self.busy = True
-                spawn(self._guard(self._exit("close" if now < regular_open else "open", market=now >= regular_open)))
+                spawn(self._guard(self._exit("time" if now >= exit_at else "carry", market=now >= regular_open)))
             return
         if self.st.status == "watching":
             if now >= cutoff:
@@ -286,12 +292,12 @@ class PremarketDip:
         self.st.target = math.ceil(self.st.entry * (1 + self.st.dip) * 100) / 100
         self.st.status = "in_trade"
         if not self.sl.allow_order(True):
-            self.st.note = "target not placed (order throttle); selling at 09:25"
+            self.st.note = "target not placed (order throttle); selling at the time exit"
             return
         jr("D", "pre", "target", {"sym": self.SYMBOL, "entry": self.st.entry, "target": self.st.target, "qty": self.st.qty})
         order = await self.sl.broker.submit(self.SYMBOL, "SELL", self.st.qty, self.st.target, "scalp-pre-target")
         if order.status == "REJECTED":
-            self.st.note = f"target rejected ({order.error}); selling at 09:25"
+            self.st.note = f"target rejected ({order.error}); selling at the time exit"
             return
         self.target_order, self.st.target_id, self.st.target_filled = order, order.id, 0.0
         self._log(f"take-profit SELL {self.st.qty:g} @ {self.st.target} resting")
@@ -417,6 +423,10 @@ class PremarketBook:
     def slot_free(self) -> bool:
         used = {s for s, n in self.names.items() if n.active()} | self.reserved
         return len(used) < self.cfg.slots
+
+    def exit_time(self, today: date) -> datetime:
+        """When leftovers are sold: 10:30 ET, or 09:59 on days the breakout may buy from 10:00 (it sizes from the pot's cash)."""
+        return datetime.combine(today, self.cfg.exit_orb if self.sl.orb_may_trade(today) else self.cfg.exit_at, ET)
 
     def active_names(self) -> list["PremarketDip"]:
         return [n for n in self.names.values() if n.active() or n.busy]

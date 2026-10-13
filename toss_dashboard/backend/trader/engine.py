@@ -24,6 +24,7 @@ from .market import MarketData
 from .risk import RiskManager
 from .scanner import Scanner
 from .strategy import Position, Setup, StrategyConfig, arm, hold_overnight, initial_stop, update_trail
+from .edges import EdgeMonitor
 from .scalp import SYMBOLS as SCALP_SYMBOLS, ScalpSleeve
 from .swing import SwingSleeve
 from . import macro as macro_data
@@ -57,8 +58,9 @@ class Engine:
         )
         self.broker.on_fill = self._on_fill
         self.swing = SwingSleeve(settings, self.broker, self._swing_prices, self.log) if settings.swing_capital > 0 else None
+        self.edges = EdgeMonitor(DATA_DIR / f"edges_{self.broker.name}.json", self.log)
         self.scalp = (ScalpSleeve(settings, self.broker, self.market, self.toss, self.risk.allow_order, self.log,
-                                  entries_blocked=lambda: self.paused or self.risk.status.halted)
+                                  entries_blocked=lambda: self.paused or self.risk.status.halted, monitor=self.edges)
                       if settings.scalp_capital > 0 else None)
         self._scalp_prep_day: date | None = None
         self._swing_prep_day: date | None = None
@@ -766,6 +768,7 @@ class Engine:
             "warnings": self.warnings,
             "swing": self.swing.snapshot() if self.swing else {"enabled": False},
             "scalp": self.scalp.snapshot() if self.scalp else {"enabled": False},
+            "edges": self.edges.snapshot(),
             "macro_ext": self.macro_ext,
         }
 

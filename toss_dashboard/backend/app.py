@@ -131,6 +131,13 @@ async def api_flatten():
     return {"flattened": True}
 
 
+@app.post("/api/edges/{name}/enable", dependencies=[api])
+async def api_edge_enable(name: str):
+    if host.engine:
+        host.engine.edges.reenable(name)
+    return {"enabled": name}
+
+
 @app.websocket("/ws")
 async def ws(socket: WebSocket):
     if not token_ok(socket.query_params.get("token")):

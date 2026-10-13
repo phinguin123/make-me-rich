@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 
 from .broker import Broker, Order
 from .config import DATA_DIR, Settings
+from .edges import EdgeMonitor
 from .market import MarketData
 from .scalp_pre import PremarketDip
 from .toss.client import TossAPIError, TossClient
@@ -60,8 +61,10 @@ class ScalpState:
 class ScalpSleeve:
     def __init__(self, settings: Settings, broker: Broker, market: MarketData, toss: TossClient,
                  allow_order: Callable[[bool], bool], log: Callable[[str, int], None],
-                 entries_blocked: Callable[[], bool] = lambda: False):
+                 entries_blocked: Callable[[], bool] = lambda: False, monitor: EdgeMonitor | None = None):
         self.s, self.broker, self.market, self.toss = settings, broker, market, toss
+        self.monitor = monitor
+        self._closing = {"scalp-orb": [0.0, 0.0], "scalp-pre": [0.0, 0.0]}  # P&L, qty sold of the position being closed
         self.allow_order, self.log, self.entries_blocked = allow_order, log, entries_blocked
         self.cfg = ScalpConfig(position_frac=settings.scalp_position_frac)
         self.path = DATA_DIR / f"scalp_{broker.name}.json"
@@ -141,6 +144,8 @@ class ScalpSleeve:
             if not bear and self.s.scalp_force_day == today.isoformat():
                 self.st.status = "waiting"
                 self.st.note = "uptrend, trading anyway: one-day override (backtest: about -0.26%/trade on uptrend days)"
+            if self.st.status == "waiting" and self.edge_size("scalp-orb") <= 0:
+                self.st.status, self.st.note = "standing_aside", "switched off by the edge monitor (live results far below the backtest)"
         self.log(f"Scalp regime {self.st.regime}: SOXX {self.st.soxx_close:.2f} vs {self.cfg.regime_ma}-day avg {self.st.soxx_ma:.2f}", logging.INFO)
         self.save()
 
@@ -199,7 +204,8 @@ class ScalpSleeve:
             if trigger and ref > trigger * (1 + self.cfg.max_chase):  # SOXL only: don't chase a gap through the range
                 self.st.status, self.st.note = "done", f"SOXL ran {ref / trigger - 1:.2%} past the range"
                 return
-            qty = math.floor(min(self.cfg.position_frac * self.equity(), self.cash, await self.broker.cash()) / (limit * (1 + self.broker.commission)))
+            frac = self.cfg.position_frac * self.edge_size("scalp-orb")
+            qty = math.floor(min(frac * self.equity(), self.cash, await self.broker.cash()) / (limit * (1 + self.broker.commission)))
             if qty < 1 or not self.allow_order(False):
                 self.st.status, self.st.note = "done", "size < 1 share or order throttle"
                 return
@@ -280,7 +286,22 @@ class ScalpSleeve:
             self.st.trades.append({"day": self.st.day, "side": self.st.side, "qty": qty, "entry": round(self.st.entry, 4),
                                    "exit": round(price, 4), "pnl": round(pnl, 2), "reason": order.tag.replace("scalp-", "")})
             self.log(f"Scalp SOLD {order.symbol} {qty:g} @ {price:.2f} P&L {pnl:+.2f}", logging.INFO)
+            self.edge_closed("scalp-orb", pnl, qty, self.st.entry, self.st.qty, side=self.st.side, day=self.st.day)
         self.save()
+
+    # ── edge health monitor ──────────────────────────────────────────────
+    def edge_size(self, edge: str) -> float:
+        return self.monitor.multiplier(edge) if self.monitor else 1.0
+
+    def edge_closed(self, edge: str, pnl: float, qty: float, entry: float, left: float, **info) -> None:
+        """Accumulate partial sells; report one trade to the monitor when the position is flat."""
+        acc = self._closing[edge]
+        acc[0] += pnl
+        acc[1] += qty
+        if left <= 1e-9:
+            if self.monitor and acc[1] > 0 and entry > 0:
+                self.monitor.record(edge, acc[0] / (acc[1] * entry), acc[0], **info)
+            self._closing[edge] = [0.0, 0.0]
 
     def snapshot(self) -> dict:
         return {"enabled": True, "capital": self.s.scalp_capital, "equity": self.equity(), "cash": self.cash,

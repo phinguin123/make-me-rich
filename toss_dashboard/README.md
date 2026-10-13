@@ -202,6 +202,36 @@ filling us, so expect the lower number.
 **The day market is not traded.** Ten hypothesis families failed after costs. The venue is a single
 ATS (Blue Ocean) with wide spreads and a record of mass cancellations (Aug 2024).
 
+## Edge health monitor (`trader/edges.py`)
+
+Each live edge's closed trades are compared with its backtest, and the edge is sized down or
+switched off when live results fall clearly outside what the backtest allows.
+Expectations live in `trader/edges.json`; regenerate them after re-running research with
+`python -m trader.research.edge_stats`.
+
+| Edge | Backtest avg/trade | Std/trade | Trades/yr | Half size at drawdown | Off at drawdown |
+|---|---|---|---|---|---|
+| Opening-range breakout (bear regime) | +0.33% | 4.3% | ~90 | −55% | −82% |
+| Pre-market SOXL dip | +1.02% | 2.1% | ~13 | −8.3% | −13.2% |
+
+**Rules.** Drawdown is the sum of per-trade returns on the position from its peak. At 50%
+sizing, the account sees half of it. The two limits are the worst one-year runs that only 10% and
+1% of 20,000 resampled backtest years reach.
+- **Off (size ×0):** the drawdown passes the 1-in-100 limit, or after 15+ trades the live average
+  is 3 standard errors below the backtest (z ≤ −3). It stays off until you press **Re-enable**
+  on the dashboard; the edge is then judged afresh from its next trade.
+- **Reduced (×0.5):** the drawdown passes the 1-in-10 limit, or z ≤ −2 after 8+ trades. It goes
+  back to full size once z > −1.5 and the drawdown has recovered to half the limit.
+- **Healthy (×1):** otherwise.
+
+**What it can and can't catch:**
+- It catches an edge that broke: execution problems, costs far above the model, or a market that
+  turned firmly against it.
+- It can't quickly see a slow fade to zero. The breakout's per-trade noise (4.3%) is 13× its
+  edge, so that takes hundreds of trades.
+- So re-run the research with new data every quarter, and update `edges.json` or retire edges
+  whose fresh out-of-sample results fail.
+
 ## Korean investor-flow (수급) research
 
 I replicated the core claims of Daishin's "수급의 정석, 구조와 알파" (Apr 2026) on Toss flow data

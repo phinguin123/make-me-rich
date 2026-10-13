@@ -38,7 +38,7 @@ class FakeToss:
 
 def make(tmp_path):
     md = MarketData(client=None)
-    s = Settings(mode="paper", capital=0.0, swing_capital=0.0, scalp_capital=2000.0)
+    s = Settings(mode="paper", capital=0.0, swing_capital=0.0, scalp_capital=2000.0, scalp_force_day="")
     broker = PaperBroker(md, 0.001, 2000.0)
     sleeve = ScalpSleeve(s, broker, md, FakeToss(), lambda urgent: True, lambda msg, lvl=20: None)
     sleeve.path = tmp_path / "scalp.json"

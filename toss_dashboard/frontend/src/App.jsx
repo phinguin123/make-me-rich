@@ -6,6 +6,7 @@ import EventLog from "./components/EventLog";
 import SwingPanel from "./components/SwingPanel";
 import MacroExt from "./components/MacroExt";
 import ScalpPanel from "./components/ScalpPanel";
+import EdgePanel from "./components/EdgePanel";
 import { money, num, pct, signClass } from "./format";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -223,6 +224,14 @@ export default function App() {
           <ScalpPanel scalp={s.scalp} />
         </div>
       )}
+
+      <div className="mb-4">
+        <EdgePanel
+          edges={s.edges}
+          busy={busy}
+          onEnable={(name) => call(`/api/edges/${name}/enable`, `Re-enable ${name}? It was switched off because its live results fell far below the backtest.`)}
+        />
+      </div>
 
       <div className="mb-4 grid gap-4 xl:grid-cols-2">
         <Panel title="Intraday positions" right={`${s.positions?.length ?? 0} open`}>

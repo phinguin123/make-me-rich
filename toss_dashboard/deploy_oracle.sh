@@ -17,8 +17,9 @@ DOCKER=${DOCKER:-docker}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-if [[ "$MODE" != "--no-start" ]] && curl -s -m 2 http://127.0.0.1:5050/healthz >/dev/null 2>&1; then
-  echo "The local engine is running on :5050. Stop it first (one Toss token per key)." >&2
+# (an `ssh -L 5050:...` dashboard tunnel also answers on :5050, so look for the process itself)
+if [[ "$MODE" != "--no-start" ]] && pgrep -f "^[^ ]*python[0-9.]* app\.py" >/dev/null; then
+  echo "A local engine (python app.py) is running. Stop it first (one Toss token per key)." >&2
   exit 1
 fi
 

@@ -185,6 +185,9 @@ class PremarketDip:
         mean = sum(rets) / len(rets)
         self.st.sigma = math.sqrt(sum((r - mean) ** 2 for r in rets) / (len(rets) - 1))
         self.st.dip = min(self.cfg.max_dip, max(self.cfg.min_dip, self.cfg.z * self.st.sigma))
+        if self.sl.edge_size("scalp-pre") <= 0:
+            self.st.status, self.st.note = "standing_aside", "switched off by the edge monitor (live results far below the backtest)"
+            return
         self.st.status = "watching"
         self._log(f"watching for SOXL {self.st.dip:.2%} below the pre-market VWAP, 07:00-09:00 ET "
                   f"(20-day vol {self.st.sigma:.1%})")
@@ -219,7 +222,8 @@ class PremarketDip:
     async def _enter(self, today: date) -> None:
         level = self.st.level
         sl = self.sl
-        qty = math.floor(min(sl.cfg.position_frac * sl.equity(), sl.cash, await sl.broker.cash()) / (level * (1 + sl.broker.commission)))
+        frac = sl.cfg.position_frac * sl.edge_size("scalp-pre")
+        qty = math.floor(min(frac * sl.equity(), sl.cash, await sl.broker.cash()) / (level * (1 + sl.broker.commission)))
         if qty < 1 or not sl.allow_order(False):
             self.st.status, self.st.note = "done", "size < 1 share or order throttle"
             return
@@ -354,6 +358,7 @@ class PremarketDip:
             sl.st.trades.append({"day": self.st.day, "side": "SOXL", "qty": qty, "entry": round(self.st.entry, 4),
                                  "exit": round(price, 4), "pnl": round(pnl, 2), "reason": f"pre {reason}"})
             self._log(f"SOLD SOXL {qty:g} @ {price:.2f} P&L {pnl:+.2f} ({reason})")
+            sl.edge_closed("scalp-pre", pnl, qty, self.st.entry, self.st.qty, side="SOXL", day=self.st.day)
         sl.save()
 
     def snapshot(self) -> dict:

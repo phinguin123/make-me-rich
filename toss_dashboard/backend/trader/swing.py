@@ -371,5 +371,5 @@ class SwingSleeve:
                          "target": self.model.get("weights", {}).get(s, 0.0),
                          "pnl": val - self.cost.get(s, 0.0) if q else 0.0})
         return {"enabled": True, "capital": self.s.swing_capital, "equity": total, "cash": self.cash,
-                "realized": self.realized, "last_run": self.last_run, "model": self.model, "risk": self.risk,
+                "realized": self.realized, "last_run": self.last_run, "busy": self.busy, "model": self.model, "risk": self.risk,
                 "holdings": rows, "params": {k: v for k, v in asdict(self.params).items() if k not in ("capital", "start")}}

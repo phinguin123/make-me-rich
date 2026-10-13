@@ -56,9 +56,15 @@ why = []
 sc = d.get("scalp") or {}
 if (sc.get("state") or {}).get("qty", 0) > 0:
     why.append("scalp holds " + str(sc["state"].get("side")))
-pre = ((sc.get("pre") or {}).get("state") or {})
-if pre.get("qty", 0) > 0 or pre.get("status") in ("entry_open", "exiting"):
-    why.append("pre-market trade " + str(pre.get("status")))
+for row in (sc.get("pre") or {}).get("names", []):
+    if row.get("qty", 0) > 0 or row.get("status") in ("entry_open", "in_trade", "exiting", "exit_pending"):
+        why.append(f"pre-market {row.get('symbol')} {row.get('status')}")
+sw = d.get("swing") or {}
+today, clock = d.get("now_et", "")[:10], d.get("now_et", "")[11:16]
+if sw.get("busy"):
+    why.append("swing is rebalancing")
+elif (sw.get("model") or {}).get("for_day") == today and sw.get("last_run") != today and "08:00" <= clock < "14:50":
+    why.append("swing has not traded today yet (it trades at 09:36 ET)")
 if d.get("positions"):
     why.append("intraday positions")
 live = [o for o in d.get("orders", []) if o.get("status") not in ("FILLED", "CANCELED", "REJECTED", "REPLACED")]

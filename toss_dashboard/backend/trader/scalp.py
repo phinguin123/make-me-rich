@@ -424,6 +424,7 @@ class ScalpSleeve:
 
     def snapshot(self) -> dict:
         return {"enabled": True, "capital": self.s.scalp_capital, "equity": self.equity(), "cash": self.cash,
-                "realized": self.realized, "state": asdict(self.st), "config": asdict(self.cfg),
+                "realized": self.realized, "state": asdict(self.st),
+                "config": {k: (v.isoformat() if isinstance(v, time) else v) for k, v in asdict(self.cfg).items()},
                 "quotes": {s: self.market.get(s).last for s in SYMBOLS},
                 "pre": self.pre.snapshot() if self.pre else {"enabled": False}}

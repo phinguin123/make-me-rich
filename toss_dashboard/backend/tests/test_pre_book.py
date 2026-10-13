@@ -91,3 +91,11 @@ def test_guard_allows_book_names_for_scalp(tmp_path):
     g = OrderGuard(lambda: 10000.0, lambda s: (100.0, 100.1), lambda: [], now=lambda: tp.at(7, 40), scalp_symbols={"SOXL", "SOXS", "TSLA"})
     assert g.check("TSLA", "BUY", 10, 99.0, "scalp-pre-entry") == ""
     assert "may only trade" in g.check("GME", "BUY", 10, 99.0, "scalp-pre-entry")
+
+
+def test_snapshot_is_plain_json(tmp_path):
+    """The dashboard WebSocket sends the snapshot with json.dumps: no datetime/time objects allowed."""
+    import json
+    sleeve, md, _ = make(tmp_path)
+    ready(sleeve, md)
+    json.dumps(sleeve.snapshot())

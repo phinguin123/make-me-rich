@@ -212,6 +212,7 @@ async def replay_day(d: pd.Timestamp, m: dict, pm: dict, daily: dict, tmp: Path)
         broker.on_quote()
 
     soxl = fr.get("SOXL")
+    handoff = None
     for k in range(0, 722):
         t0 = base + timedelta(minutes=k)
         if soxl is not None and 331 <= k <= 720 and np.isfinite(soxl[3][k - 1]):  # the bar that just closed (end-stamped)
@@ -234,13 +235,19 @@ async def replay_day(d: pd.Timestamp, m: dict, pm: dict, daily: dict, tmp: Path)
             for sym, p in pts.items():
                 set_px(sym, p[min(len(p) - 1, int(j * len(p) / steps))])
             await run(now, lambda sp, now=now: sleeve.tick(now, session, pre_session, sp))
+        # relay handoff: the book is flat and the whole pot is free cash before the next stage may spend it
+        # (the breakout from 10:00 on downtrend days; stocks-in-play from 10:30 on uptrend days)
+        if (k == 359 and sleeve.st.regime == "bear") or (k == 390 and sleeve.st.regime == "bull"):
+            held = [x for x, n in sleeve.pre.names.items() if n.st.qty > 0]
+            gap = sleeve.equity() - sleeve.free_cash()
+            handoff = "ok" if not held and abs(gap) < 0.01 else f"{t0:%H:%M} book still holds {held or '-'}, ${gap:,.2f} not free"
     pre_tr = [t for t in sleeve.st.trades if str(t.get("reason", "")).startswith("pre")]
     orb_tr = [t for t in sleeve.st.trades if not str(t.get("reason", "")).startswith("pre")]
     ret = lambda trs: sum(t["pnl"] for t in trs) / sum(t["qty"] * t["entry"] for t in trs) if trs else None  # noqa: E731
     pre_by = {sym: ret([t for t in pre_tr if t["side"] == sym]) for sym in {t["side"] for t in pre_tr}}
     return {"date": d, "orb_side": orb_tr[0]["side"] if orb_tr else None, "orb_ret": ret(orb_tr), "orb_reason": orb_tr[-1]["reason"] if orb_tr else "",
             "pre": pre_by, "regime": sleeve.st.regime, "orb_note": sleeve.st.note, "qqq_ok": sleeve.pre.regime.get("ok"),
-            "refused": refused, "errors": errors}
+            "refused": refused, "errors": errors, "handoff": handoff}
 
 
 def research_pre(pm: dict, up: pd.Series, bear: pd.Series) -> dict[tuple, float]:
@@ -322,6 +329,8 @@ def main() -> int:
     pre_gap = float(np.mean([live_pairs[k] - res_pairs[k] for k in common])) if common else 0.0
     refused = sum(len(x) for x in res["refused"])
     errors = sum(len(x) for x in res["errors"])
+    ho = res[res["handoff"].notna()]
+    ho_bad = ho[ho["handoff"] != "ok"]
     print(f"Replay of the live scalp code: {len(res)} days {res.index[0]:%Y-%m-%d} .. {res.index[-1]:%Y-%m-%d}")
     print(f"  breakout: research traded {rd.sum()} days, live {ld.sum()}; same side on {orb_match:.0%} of research days, "
           f"live-only days {orb_extra:.1%}; return gap live-research {orb_gap:+.3%}/trade "
@@ -330,6 +339,11 @@ def main() -> int:
           f"same name+day on {pre_match:.0%} of all trades; return gap {pre_gap:+.3%} (n {len(common)}); "
           f"live avg {np.mean(list(live_pairs.values())) if live_pairs else 0:+.3%} vs research {np.mean(list(res_pairs.values())) if res_pairs else 0:+.3%}")
     print(f"  guard refusals {refused}, exceptions {errors}")
+    print(f"  relay handoff: book flat and the whole pot free by 09:59 on {(ho[ho['regime'] == 'bear']['handoff'] == 'ok').sum()}/"
+          f"{(ho['regime'] == 'bear').sum()} breakout days and by 10:30 on {(ho[ho['regime'] == 'bull']['handoff'] == 'ok').sum()}/"
+          f"{(ho['regime'] == 'bull').sum()} uptrend days")
+    for d, row in ho_bad.head(5).iterrows():
+        print(f"    ! handoff {d:%Y-%m-%d}: {row['handoff']}")
     only_l = sorted(set(live_pairs) - set(res_pairs))[:6]
     only_r = sorted(set(res_pairs) - set(live_pairs))[:6]
     if only_l or only_r:
@@ -338,9 +352,9 @@ def main() -> int:
     for x in [e for es in res["refused"] for e in es][:5] + [e for es in res["errors"] for e in es][:5]:
         print("    !", x)
     ok = (orb_match >= GATE["orb_match"] and orb_extra <= GATE["orb_extra"] and abs(orb_gap) <= GATE["orb_ret_gap"]
-          and pre_match >= GATE["pre_match"] and abs(pre_gap) <= GATE["pre_ret_gap"] and errors == 0
+          and pre_match >= GATE["pre_match"] and abs(pre_gap) <= GATE["pre_ret_gap"] and errors == 0 and ho_bad.empty
           and refused <= GATE["refusal_share"] * max(1, len(live_pairs) + ld.sum()))
-    print(f"  parity gate {'PASSED' if ok else 'FAILED'} (thresholds {GATE}, no exceptions)")
+    print(f"  parity gate {'PASSED' if ok else 'FAILED'} (thresholds {GATE}, no exceptions, every relay handoff clean)")
     return 0 if ok or not args.gate else 1
 
 

@@ -24,7 +24,7 @@ from .config import DATA_DIR, SETTINGS, Settings
 from .market import MarketData
 from .risk import RiskManager
 from .scanner import Scanner
-from .strategy import Position, Setup, StrategyConfig, arm, hold_overnight, initial_stop, update_trail
+from .strategy import Position, Setup, StrategyConfig, arm, hold_overnight, initial_stop, relay_config, update_trail
 from .allocator import Allocator
 from .alpaca import AlpacaData
 from .alpaca_stream import AlpacaStream
@@ -59,6 +59,9 @@ class Engine:
     def __init__(self, settings: Settings = SETTINGS):
         self.s = settings
         self.cfg = StrategyConfig.load()
+        self.relay = settings.relay and settings.scalp_capital > 0 and settings.capital <= 0
+        if self.relay:  # the stocks-in-play leg of the intraday relay: its own profile, defined in code
+            self.cfg = relay_config(self.cfg, settings.relay_regime)
         self.toss = TossClient()
         feed = settings.alpaca_feed if settings.alpaca_key and settings.alpaca_secret else "off"
         self.alpaca = AlpacaData() if feed == "sip" else None  # SIP minute bars (Algo Trader Plus)
@@ -77,7 +80,8 @@ class Engine:
         self.swing = SwingSleeve(settings, self.broker, self._swing_prices, self.log) if settings.swing_capital > 0 else None
         self.edges = EdgeMonitor(DATA_DIR / f"edges_{self.broker.name}.json", self.log)
         self.broker.guard = OrderGuard(self._bot_money, self._fresh_quote, self.broker.open_orders,
-                                       scalp_symbols={"SOXL", "SOXS"} | set(settings.pre_names if settings.scalp_pre else ()))
+                                       scalp_symbols={"SOXL", "SOXS"} | set(settings.pre_names if settings.scalp_pre else ()),
+                                       relay_pot=(lambda: self.scalp.equity() if self.scalp else 0.0) if self.relay else None)
         self.broker.on_refuse = self._warn
         self.scalp = (ScalpSleeve(settings, self.broker, self.market, self.toss, self.risk.allow_order, self.log,
                                   entries_blocked=lambda: self.paused or self.risk.status.halted, monitor=self.edges)
@@ -88,6 +92,10 @@ class Engine:
                                     on_breach=self._on_breach, is_paused=lambda: self.paused,
                                     phases=Allocator.parse_phases(settings.alloc_phases) if settings.alloc_phases else None)
                           if self.scalp and self.swing and (settings.alloc_phases or settings.alloc_scalp + settings.alloc_swing > 0) else None)
+        if self.relay and self.scalp:
+            self.scalp.relay_value = self._relay_value
+            self.scalp.relay_busy = lambda: any(p.qty > 0 for p in self.positions.values()) or bool(self._entering)
+        self._relay_reserved: dict[str, float] = {}  # stocks-in-play entries sized but not yet filled
         self._swing_prep_day: date | None = None
         self._swing_trade_day: date | None = None
         self.macro_ext: dict = {}
@@ -145,6 +153,42 @@ class Engine:
 
     def equity(self) -> float:
         return self.s.capital + self.realized_pnl + self.unrealized()
+
+    def _relay_value(self) -> float:
+        return sum((self.market.get(p.symbol).last or p.entry) * p.qty for p in self.positions.values())
+
+    def relay_on(self, today: date) -> bool:
+        """Stocks-in-play trades today: the relay is on and the scalp pot's breakout stands aside (semis uptrend)."""
+        return bool(self.relay and self.scalp and self.scalp.relay_today(today))
+
+    def _relay_qty(self, limit: float, stop: float) -> int:
+        """Shares for a relay entry: risk and size are fractions of the scalp pot (scaled by the edge monitor),
+        paid only from cash nothing else in the pot may still spend. Nothing awaits in here, so two entries
+        can't size from the same dollars."""
+        risk = limit - stop
+        if risk <= 0 or limit <= 0 or not self.scalp:
+            return 0
+        size = self.edges.multiplier("intraday-orb")
+        pot = self.scalp.equity()
+        free = self.scalp.free_cash() - sum(self._relay_reserved.values())
+        by_risk = self.s.relay_risk_per_trade * size * pot / risk
+        by_size = self.s.relay_max_position_pct * size * pot / limit
+        by_cash = free / (limit * (1 + self.commission))
+        return max(0, math.floor(min(by_risk, by_size, by_cash)))
+
+    def _relay_snapshot(self) -> dict:
+        if not self.relay or not self.scalp:
+            return {"enabled": False}
+        today = datetime.now(ET).date()
+        return {"enabled": True, "today": self.relay_on(today), "regime": self.cfg.regime, "profile": "bigger-swing (close by 16:00)",
+                "pot": self.scalp.equity(), "free_cash": self.scalp.free_cash() - sum(self._relay_reserved.values()),
+                "positions": sum(1 for p in self.positions.values() if p.qty > 0), "value": self._relay_value(),
+                "risk_per_trade": self.s.relay_risk_per_trade, "max_position_pct": self.s.relay_max_position_pct,
+                "note": ("semis uptrend: stocks-in-play trades the pot's free cash" if self.relay_on(today)
+                         else "semis downtrend or regime not loaded: the SOXL/SOXS breakout owns the pot")}
+
+    def _itag(self, tag: str) -> str:
+        return f"relay-{tag}" if self.relay else tag
 
     async def available_cash(self) -> float:
         invested = sum(p.entry * p.qty for p in self.positions.values())
@@ -422,8 +466,8 @@ class Engine:
         open_, close_ = self.session["open"], self.session["close"]
         if self.day != today and now >= open_ - timedelta(hours=2):
             self._new_day(today)
-        intraday_on = self.s.capital > 0
-        if intraday_on and open_ - timedelta(minutes=90) <= now < close_ and self.scanner.prepared_for != today:
+        intraday_on = self.s.capital > 0 or self.relay_on(today)
+        if (self.s.capital > 0 or self.relay) and open_ - timedelta(minutes=90) <= now < close_ and self.scanner.prepared_for != today:
             self._ensure_prepare(today)
         if open_ - timedelta(minutes=1) <= now <= close_ + timedelta(minutes=2):
             minute = now.replace(second=0, microsecond=0)
@@ -532,8 +576,12 @@ class Engine:
         if self.scanner.prepared_for != today:
             await self._ensure_prepare(today)
         cands = await self.scanner.scan(today)
+        busy = set()
+        if self.scalp:
+            busy |= {self.scalp.st.side} if self.scalp.st.qty > 0 else set()
+            busy |= {s for s, n in (self.scalp.pre.names.items() if self.scalp.pre else []) if n.active()}
         for c in cands:
-            if c.symbol in self.positions or (self.swing and c.symbol in self.swing.holdings):
+            if c.symbol in self.positions or (self.swing and c.symbol in self.swing.holdings) or c.symbol in busy:
                 continue
             self.setups[c.symbol] = Setup(c.symbol, atr=c.atr14, rvol=c.rvol, prev_close=c.prev_close, sma50=c.sma50)
         self._update_subscriptions()
@@ -638,8 +686,15 @@ class Engine:
         if self.scalp and self.session:
             self.scalp.on_minute(now, self.session["open"])
         self._update_macro()
-        self.risk.check_daily_loss(self.equity())
+        self._check_daily_loss()
         self._save()
+
+    def _check_daily_loss(self) -> None:
+        """The stand-alone intraday sleeve's daily loss limit. The relay has no capital of its own (its P&L is the
+        scalp pot's, watched by the edge monitor and the account breaker): on a near-zero base a few dollars would
+        read as a big % loss and halt every entry, the pre-market book's included."""
+        if self.s.capital > 0:
+            self.risk.check_daily_loss(self.equity())
 
     def _update_macro(self) -> None:
         for sym in MACRO:
@@ -738,7 +793,17 @@ class Engine:
                 return
             limit = math.ceil(min(cap, ref * 1.0015) * 100) / 100
             stop = initial_stop(self.cfg, setup, limit)
-            qty = self.risk.shares_for(self.equity(), await self.available_cash(), limit, stop, self.commission)
+            if self.relay:
+                try:
+                    broker_cash = await self.broker.cash()
+                except TossAPIError as exc:
+                    self.log(f"buying power check failed: {exc}", logging.WARNING)
+                    broker_cash = 0.0
+                qty = min(self._relay_qty(limit, stop), math.floor(broker_cash / (limit * (1 + self.commission))))
+                if qty >= 1:
+                    self._relay_reserved[sym] = qty * limit * (1 + self.commission)
+            else:
+                qty = self.risk.shares_for(self.equity(), await self.available_cash(), limit, stop, self.commission)
             if qty < 1:
                 setup.state, setup.note = "SKIPPED", "size < 1 share"
                 self.log(f"{sym}: skipped — position size under 1 share at ${limit}")
@@ -747,7 +812,7 @@ class Engine:
                 setup.state = "ARMED"
                 return
             self.positions[sym] = Position(sym, 0.0, limit, stop, stop, setup.atr, datetime.now(ET).isoformat(), highest=limit, meta={"rvol": setup.rvol, "trigger": setup.trigger})
-            order = await self.broker.submit(sym, "BUY", qty, limit, "entry")
+            order = await self.broker.submit(sym, "BUY", qty, limit, self._itag("entry"))
             self.log(f"{sym}: BUY {qty} @ ≤{limit} (trigger {setup.trigger}, stop {stop}, rvol {setup.rvol:.1f}x)")
             await self._await_fill(order, timeout=8.0)
             if not order.done:
@@ -767,6 +832,7 @@ class Engine:
             self._save()
         finally:
             self._entering.discard(sym)
+            self._relay_reserved.pop(sym, None)
 
     def _entry_block_reason(self) -> str:
         if self.paused:
@@ -777,6 +843,11 @@ class Engine:
             return "max positions"
         if not self._regime_ok():
             return f"regime off ({self.cfg.regime})"
+        if self.relay:
+            if not self.relay_on(datetime.now(ET).date()):
+                return "relay: not a semis-uptrend day (the SOXL/SOXS breakout owns the pot)"
+            if self.edges.multiplier("intraday-orb") <= 0:
+                return "relay: switched off by the edge monitor"
         return ""
 
     async def _await_fill(self, order: Order, timeout: float) -> None:
@@ -818,7 +889,7 @@ class Engine:
                 if not self.risk.allow_order(urgent=True):
                     await asyncio.sleep(5)
                     continue
-                order = await self.broker.submit(sym, "SELL", pos.qty, limit, reason)
+                order = await self.broker.submit(sym, "SELL", pos.qty, limit, self._itag(reason))
                 await self._await_fill(order, timeout=5.0)
                 if not order.done:
                     await self.broker.cancel(order)
@@ -854,6 +925,11 @@ class Engine:
             pos.entry = (pos.entry * pos.qty + price * qty + fee) / new_qty if pos.qty else (price * qty + fee) / qty
             pos.qty = new_qty
             pos.highest = max(pos.highest, price)
+            if self.relay and self.scalp:
+                spent = qty * price * (1 + self.commission)  # this part left the pot's cash: no longer reserved
+                if order.symbol in self._relay_reserved:
+                    self._relay_reserved[order.symbol] = max(0.0, self._relay_reserved[order.symbol] - spent)
+                self.scalp.relay_fill("BUY", qty, price)
         else:
             if pos is None:
                 return
@@ -861,6 +937,10 @@ class Engine:
             pnl = proceeds - qty * pos.entry
             self.realized_pnl += pnl
             pos.qty = round(pos.qty - qty, 6)
+            if self.relay and self.scalp:
+                self.scalp.relay_fill("SELL", qty, price, pnl)
+            pos.meta["pnl"] = pos.meta.get("pnl", 0.0) + pnl
+            pos.meta["sold_cost"] = pos.meta.get("sold_cost", 0.0) + qty * pos.entry
             trade = {
                 "symbol": pos.symbol, "qty": qty, "entry": round(pos.entry, 4), "exit": round(price, 4),
                 "pnl": round(pnl, 2), "ret": round(proceeds / (qty * pos.entry) - 1, 5), "reason": order.tag,
@@ -873,6 +953,8 @@ class Engine:
             self.log(f"{pos.symbol}: SOLD {qty} @ {price:.2f}  P&L {pnl:+.2f} ({trade['r_multiple']}R)")
             if pos.qty <= 1e-6:
                 self.positions.pop(pos.symbol, None)
+                if pos.meta.get("sold_cost"):  # one closed trade for the edge monitor
+                    self.edges.record("intraday-orb", pos.meta["pnl"] / pos.meta["sold_cost"], pos.meta["pnl"], sym=pos.symbol)
         self._save()
 
     # ── end of day ────────────────────────────────────────────────────────
@@ -957,6 +1039,7 @@ class Engine:
             "day_pnl": self.equity() - self.risk.day_start_equity,
             "risk": {"halted": self.risk.status.halted, "reason": self.risk.status.reason, "orders_today": self.risk.orders_today},
             "positions": positions,
+            "relay": self._relay_snapshot(),
             "setups": [s.as_dict() | {"last": self.market.get(s.symbol).last} for s in self.setups.values()],
             "macro": self.macro,
             "trades": list(self.recent_trades)[-50:],

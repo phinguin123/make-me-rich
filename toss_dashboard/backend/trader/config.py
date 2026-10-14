@@ -75,6 +75,14 @@ class Settings:
     # Account drawdown breaker: pause new entries when scalp + swing + reserve is this far below its peak (0 = off)
     account_dd_halt: float = field(default_factory=lambda: _float("TRADER_ACCOUNT_DD_HALT", 0.20))
 
+    # Intraday relay: on semis-uptrend days (the SOXL/SOXS breakout stands aside) the stocks-in-play breakout
+    # trades the scalp pot's free cash, after the pre-market book (research/intraday_relay.py). It needs no
+    # TRADER_CAPITAL of its own: its positions, cash and P&L live inside the scalp pot.
+    relay: bool = field(default_factory=lambda: _bool("TRADER_RELAY", False))
+    relay_regime: str = field(default_factory=lambda: _env("TRADER_RELAY_REGIME", "risk_on"))  # none | risk_on
+    relay_risk_per_trade: float = field(default_factory=lambda: _float("TRADER_RELAY_RISK", 0.01))  # of the scalp pot
+    relay_max_position_pct: float = field(default_factory=lambda: _float("TRADER_RELAY_MAX_POSITION_PCT", 0.35))  # of the pot
+
     # Risk
     risk_per_trade: float = field(default_factory=lambda: _float("TRADER_RISK_PER_TRADE", 0.01))
     max_positions: int = field(default_factory=lambda: _int("TRADER_MAX_POSITIONS", 4))

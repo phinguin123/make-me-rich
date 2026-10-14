@@ -28,6 +28,7 @@ LEVERAGED = {"SOXL", "SOXS", "TQQQ", "SQQQ", "UPRO", "SPXU", "SPXL", "SPXS", "TE
              "FNGU", "FNGD", "BULZ", "BERZ", "USD", "SSG", "QLD", "QID", "SSO", "SDS"}
 MAX_SHARE = {"scalp": 0.60, "swing": 0.25, "intraday": 0.35}
 MAX_ORDERS = {"scalp": 30, "swing": 60, "intraday": 100}
+RELAY_MAX_SHARE = 0.40  # one stocks-in-play position in the relay: sized at <= 35% of the scalp pot, refused above 40%
 SCALP_BUY_WINDOWS = ((time(4, 30), time(9, 1)), (time(9, 59), time(11, 31)))
 
 
@@ -38,8 +39,10 @@ def sleeve_of(tag: str) -> str:
 class OrderGuard:
     def __init__(self, bot_money: Callable[[], float], quote: Callable[[str], tuple[float, float]],
                  open_orders: Callable[[], list], now: Callable[[], datetime] = lambda: datetime.now(ET),
-                 scalp_symbols: set[str] | frozenset = frozenset({"SOXL", "SOXS"})):
+                 scalp_symbols: set[str] | frozenset = frozenset({"SOXL", "SOXS"}),
+                 relay_pot: Callable[[], float] | None = None):
         self.bot_money, self.quote, self.open_orders, self.now = bot_money, quote, open_orders, now
+        self.relay_pot = relay_pot  # set when stocks-in-play trades inside the scalp pot (the intraday relay)
         self.scalp_symbols = set(scalp_symbols)
         self.counts: Counter = Counter()
         self._day: date | None = None
@@ -68,6 +71,10 @@ class OrderGuard:
             money = self.bot_money()
             if money > 0 and notional > money * MAX_SHARE[sl] + 1:
                 return f"{sl} buy of ${notional:,.0f} exceeds {MAX_SHARE[sl]:.0%} of the bot's ${money:,.0f}"
+            if sl == "intraday" and self.relay_pot is not None:
+                pot = self.relay_pot()
+                if pot > 0 and notional > pot * RELAY_MAX_SHARE + 1:
+                    return f"relay buy of ${notional:,.0f} exceeds {RELAY_MAX_SHARE:.0%} of the scalp pot's ${pot:,.0f}"
             if sl == "scalp":
                 t = now.astimezone(ET).time()
                 if not any(a <= t < b for a, b in SCALP_BUY_WINDOWS):

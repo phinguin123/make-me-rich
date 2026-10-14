@@ -120,9 +120,11 @@ class Allocator:
             return "scalp holds a position"
         if sc.pre and (sc.pre.holding() or sc.pre.any_busy):
             return "pre-market trade open"
+        if sc.relay_busy():
+            return "stocks-in-play position open (relay)"
         if self.swing.busy:
             return "swing is trading"
-        if any(o.tag.startswith(("scalp", "swing")) for o in self.broker.open_orders()):
+        if any(o.tag.startswith(("scalp", "swing", "relay")) for o in self.broker.open_orders()):
             return "orders working"
         return ""
 

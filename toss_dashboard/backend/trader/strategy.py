@@ -14,7 +14,7 @@ Rules (identical to trader/research/backtest.py, which validated them):
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, time
 
 from .config import DATA_DIR
@@ -57,6 +57,15 @@ class StrategyConfig:
     def save(self) -> None:
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_PATH.write_text(json.dumps(asdict(self), indent=2))
+
+
+# The relay's stocks-in-play profile ("bigger-swing", research/intraday_relay.py): volatile names only, and every
+# position closes by 16:00 so the scalp pot is flat for the next morning's pre-market book.
+RELAY_PROFILE = {"min_atr_pct": 0.05, "exit_mode": "eod"}
+
+
+def relay_config(cfg: StrategyConfig, regime: str) -> StrategyConfig:
+    return replace(cfg, **RELAY_PROFILE, regime=regime)
 
 
 @dataclass

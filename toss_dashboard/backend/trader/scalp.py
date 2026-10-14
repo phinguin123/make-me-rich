@@ -90,6 +90,10 @@ class ScalpSleeve:
         self.pre = (PremarketBook(self, tuple(settings.pre_names), PreConfig(slots=settings.pre_slots, qqq_filter=settings.pre_qqq_filter))
                     if settings.scalp_pre else None)
         self.fresh = not self.path.exists()  # never ran: owns no money yet (see allocator)
+        # Intraday relay (the engine's stocks-in-play positions trade this pot on uptrend days): their market
+        # value and whether any are open or being entered. The engine wires these; alone they are empty.
+        self.relay_value: Callable[[], float] = lambda: 0.0
+        self.relay_busy: Callable[[], bool] = lambda: False
         self._load()
 
     # ── persistence ───────────────────────────────────────────────────────
@@ -110,10 +114,27 @@ class ScalpSleeve:
         tmp.replace(self.path)
 
     def equity(self) -> float:
-        pre = self.pre.value() if self.pre else 0.0
+        pre = (self.pre.value() if self.pre else 0.0) + self.relay_value()
         if self.st.qty and self.st.side:
             return self.cash + pre + self.st.qty * (self.market.get(self.st.side).last or self.st.entry)
         return self.cash + pre
+
+    def free_cash(self) -> float:
+        """Cash nothing else in the pot may still spend: minus the pre-market book's resting entries."""
+        return self.cash - (sum(self.pre.reserved_cash().values()) if self.pre else 0.0)
+
+    def relay_fill(self, side: str, qty: float, price: float, pnl: float = 0.0) -> None:
+        """A stocks-in-play fill in the relay: its cash moves in and out of this pot, its P&L is the pot's."""
+        if side == "BUY":
+            self.cash -= qty * price * (1 + self.broker.commission)
+        else:
+            self.cash += qty * price * (1 - self.broker.commission - 0.0000206)
+            self.realized += pnl
+        self.save()
+
+    def relay_today(self, today: date) -> bool:
+        """The relay's stocks-in-play leg trades only while semis are in an uptrend and the breakout stands aside."""
+        return self.st.day == today.isoformat() and self.st.regime == "bull" and self.st.status == "standing_aside"
 
     # ── daily setup ───────────────────────────────────────────────────────
     async def prepare(self, today: date) -> None:

@@ -3,6 +3,8 @@
 Per-trade net returns (on the position, after Toss fees and modelled slippage) for each live edge:
   scalp-orb  bear-regime 30-minute opening-range breakout   (research/scalp.py, e2_orb)
   scalp-pre  pre-market dip book: 14 names, 3 slots, QQQ filter, pessimistic fills (research/pre_slots.py)
+  intraday-orb  the relay's stocks-in-play breakout: bigger-swing profile, live regime filter, closed by 16:00
+             (research/backtest.py on 2024-01 .. 2026-10 SIP minutes, its own sizing, fees and 0.05% slippage)
 For each: mean, standard deviation, trades per year, and two drawdown limits from 20,000 bootstrap
 resamples of one year of trades: the worst peak-to-trough run that only 10% (dd_reduce) and 1%
 (dd_off) of resampled years reach.
@@ -29,7 +31,7 @@ from . import scalp, scalp_ext
 OUT = Path(__file__).resolve().parents[1] / "edges.json"
 # Rough count of the configurations tried before each edge was picked (families x parameters x filters in
 # research/scalp.py; dip size, start and exit times, slots, names, filters and fill models for the book).
-TRIALS = {"scalp-orb": 60, "scalp-pre": 200}
+TRIALS = {"scalp-orb": 60, "scalp-pre": 200, "intraday-orb": 250}  # intraday: 196 sweep variants + profiles
 
 
 def orb_trades() -> pd.DataFrame:
@@ -61,6 +63,18 @@ def pre_trades() -> pd.DataFrame:
             busy.append(row.q)
             rows.append((d, row.net, row.time_exit))
     return pd.DataFrame(rows, columns=["date", "net", "time_exit"])
+
+
+def relay_trades(regime: str = "risk_on") -> pd.DataFrame:
+    """Taken trades of the relay's stocks-in-play leg on its own pot (the per-trade returns don't depend on
+    the pot size beyond whole-share rounding)."""
+    from dataclasses import replace
+    from .backtest import load_all, generate_trades, run_portfolio
+    from .intraday_relay import BIGGER
+    p = replace(BIGGER, regime=regime, capital=3720.0)
+    inplay, macro, cache, _ = load_all()
+    taken, _ = run_portfolio(p, generate_trades(p, inplay, macro, cache))
+    return pd.DataFrame({"date": pd.to_datetime(taken["date"]), "net": taken["ret"].to_numpy()})
 
 
 def pre_trades_soxl_only() -> pd.DataFrame:
@@ -126,6 +140,9 @@ def main() -> None:
                            0.0003, TRIALS["scalp-orb"]),
         "scalp-pre": stats(pre, "Pre-market dip book (14 names, 3 slots, QQQ filter)", "research/pre_slots.py pessimistic", rng,
                            scalp_ext.SLIP["pre"] * float(pre["time_exit"].mean()) / 2, TRIALS["scalp-pre"]),
+        # regime as TRADER_RELAY_REGIME's default; regenerate if the live setting changes
+        "intraday-orb": stats(relay_trades("risk_on"), "Relay: stocks-in-play breakout (bigger-swing, risk-on, closed by 16:00)",
+                              "research/backtest.py via intraday_relay.BIGGER", rng, 0.0005, TRIALS["intraday-orb"]),
     }
     OUT.write_text(json.dumps({"generated": date.today().isoformat(), "edges": edges}, indent=2) + "\n")
     for k, v in edges.items():

@@ -251,11 +251,18 @@ export default function App() {
       </div>
 
       <div className="mb-4 grid gap-4 xl:grid-cols-2">
-        <Panel title="Intraday positions" right={`${s.positions?.length ?? 0} open`}>
+        <Panel title={s.relay?.enabled ? "Relay: stocks-in-play positions (in the scalp pot)" : "Intraday positions"} right={`${s.positions?.length ?? 0} open`}>
+          {s.relay?.enabled && (
+            <div className="border-b border-zinc-900 px-3 py-2 text-[11px] text-zinc-400">
+              <span className={s.relay.today ? "text-emerald-300" : "text-zinc-500"}>{s.relay.today ? "ON today" : "off today"}</span>
+              {" · "}{s.relay.note} · free cash {money(s.relay.free_cash)} of the {money(s.relay.pot)} pot · risk{" "}
+              {pct(s.relay.risk_per_trade, 1)} / max {pct(s.relay.max_position_pct, 0)} per position · regime {s.relay.regime} · closes by 16:00
+            </div>
+          )}
           <Table columns={positionCols} rows={s.positions ?? []} empty="No open positions" />
         </Panel>
         <Panel title="Stocks in play" right={`${s.setups?.length ?? 0} candidates`}>
-          <Table columns={setupCols} rows={s.setups ?? []} empty="Scan runs at 09:35:10 ET" />
+          <Table columns={setupCols} rows={s.setups ?? []} empty={s.relay?.enabled && !s.relay.today ? "Relay off today (semis downtrend: the breakout owns the pot)" : "Scan runs at 09:35:10 ET"} />
         </Panel>
       </div>
 

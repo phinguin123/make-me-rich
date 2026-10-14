@@ -21,6 +21,8 @@ the corrected ones (2021-01 to 2026-10, yearly rebalance).
   - Pre-market dip book (14 names, 3 slots, QQQ filter): watches from 17:00, buys 17:30–22:00. What
     hasn't hit its take-profit is sold at 23:30, or at 22:59 on days the breakout may trade.
   - Breakout: 22:30–04:57, only in semis downtrends, never held overnight.
+  - Relay, semis-uptrend days only: stocks-in-play breakouts 22:35–00:30 on the scalp pot's free cash
+    (book leftovers free up at 23:30), all closed by 04:57. See "Intraday relay" below.
   - Swing: trades at 22:36 on rebalance days.
 - **Adding or removing money:** after you deposit or withdraw in Toss, use **Add to bot / Take
   out** on the dashboard (`POST /api/allocation/deposit?amount=`). The bot never claims cash by
@@ -861,7 +863,42 @@ T-bills.
   2016–2026, against the swing sleeve's 1.12 and −20% in 2019–2026. The swing sleeve's
   history is shorter, though.
 
-## Intraday relay (research 2026-10-14, not live: `research/intraday_relay.py`)
+## Intraday relay (live since 2026-10-14, `TRADER_RELAY=1`; research: `research/intraday_relay.py`)
+
+**How it runs.** The scalp pot (30% of the bot) is one pot shared by three stages each day:
+- **04:30–10:30 ET:** the pre-market dip book, unchanged.
+- **Semis downtrend** (SOXX below its 50-day): the book is flat by 09:59, then the SOXL/SOXS breakout uses
+  the whole pot.
+- **Semis uptrend** (the breakout stands aside): the engine's stocks-in-play breakout scans at 09:35:10
+  and enters until 11:30. It uses the bigger-swing profile (ATR ≥ 5%, `TRADER_RELAY_REGIME`, default
+  `risk_on`) and closes everything by 15:57, so the pot is flat for the next pre-market.
+
+**Money rules:**
+- Each entry risks 1% of the pot to its ATR stop (`TRADER_RELAY_RISK`), capped at 35% of the pot
+  (`TRADER_RELAY_MAX_POSITION_PCT`) and at most 4 positions. Both are scaled by the edge monitor.
+- An entry pays only from cash nothing else may still spend: the book's resting entries and other
+  entries in flight don't count as free. The book's take-profits and its 10:30 sale free cash as they
+  fill.
+- Fills move the pot's own cash and P&L, so the allocator, the account breaker and the yearly
+  rebalance see the positions. The rebalance waits while one is open.
+- The order guard refuses a relay buy above 40% of the pot.
+- Names the book or the breakout already hold are skipped at the scan.
+- The stand-alone sleeve's 2% daily loss limit doesn't apply. The relay has no capital of its own, so
+  on a near-zero base a few dollars would read as a big loss and halt every entry. The edge monitor
+  (`intraday-orb`) and the −20% account breaker watch it instead.
+- The replay check verifies the handoff on every replayed day: the book is flat and the whole pot is
+  free cash by 09:59 (downtrend) or 10:30 (uptrend). A planted late-exit bug fails it.
+
+**Regime filter.** The live default is `risk_on`: entries only while QQQ is above its VWAP and VIXY is
+below its open. On 30/70, 2024–26:
+- `risk_on`: +76.3%/yr, Sharpe 2.49, max DD −12.8%, 294 stocks-in-play trades. It added +49% a year
+  to the pot before July 2025, but only +6% after.
+- `none`: +83.6%/yr, Sharpe 2.55, max DD −16.1%, 866 trades. It held up after July 2025 (+36% then
+  +56% a year).
+- To switch, set `TRADER_RELAY_REGIME=none` in `.env`, re-run `python -m trader.research.edge_stats`
+  (the `intraday-orb` expectations are for `risk_on`), and deploy.
+
+**Research behind it (2026-10-14):**
 
 The scalp pot as one daily relay:
 1. The pre-market book, unchanged (10:30 exit; 09:59 on breakout days).
@@ -909,6 +946,7 @@ Expectations live in `trader/edges.json`; regenerate them after re-running resea
 |---|---|---|---|---|---|---|
 | Opening-range breakout (bear regime) | +0.33% | 4.3% | ~90 | −55% | −82% | **0.29** (60 tries) |
 | Pre-market dip book (14 names, 3 slots, 10:30 exit) | +0.95% | 2.2% | ~119 | −22% | −33% | 0.999 (200 tries) |
+| Relay stocks-in-play (bigger-swing, risk-on, closed by 16:00) | +0.63% | 8.1% | ~160 alone | −38% | −56% | 0.82 (250 tries) |
 
 **Multiple-testing check (added 2026-10-14).** The Deflated Sharpe Ratio (Bailey & López de Prado
 2014) is the chance the per-trade edge is real after allowing for how many configurations the

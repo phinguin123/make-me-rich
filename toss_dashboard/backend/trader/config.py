@@ -79,7 +79,7 @@ class Settings:
     # trades the scalp pot's free cash, after the pre-market book (research/intraday_relay.py). It needs no
     # TRADER_CAPITAL of its own: its positions, cash and P&L live inside the scalp pot.
     relay: bool = field(default_factory=lambda: _bool("TRADER_RELAY", False))
-    relay_regime: str = field(default_factory=lambda: _env("TRADER_RELAY_REGIME", "risk_on"))  # none | risk_on
+    relay_regime: str = field(default_factory=lambda: _env("TRADER_RELAY_REGIME", "none"))  # none | risk_on (QQQ > VWAP, VIXY down)
     relay_risk_per_trade: float = field(default_factory=lambda: _float("TRADER_RELAY_RISK", 0.01))  # of the scalp pot
     relay_max_position_pct: float = field(default_factory=lambda: _float("TRADER_RELAY_MAX_POSITION_PCT", 0.35))  # of the pot
 

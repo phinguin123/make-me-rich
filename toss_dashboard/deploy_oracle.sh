@@ -56,18 +56,22 @@ why = []
 sc = d.get("scalp") or {}
 if (sc.get("state") or {}).get("qty", 0) > 0:
     why.append("scalp holds " + str(sc["state"].get("side")))
+held = set()  # pre-market positions waiting on a resting take-profit: restart-safe (state and order are re-attached)
 for row in (sc.get("pre") or {}).get("names", []):
-    if row.get("qty", 0) > 0 or row.get("status") in ("entry_open", "in_trade", "exiting", "exit_pending"):
-        why.append(f"pre-market {row.get('symbol')} {row.get('status')}")
+    if row.get("status") == "in_trade" and row.get("qty", 0) > 0:
+        held.add(row.get("symbol"))
+    elif row.get("qty", 0) > 0 or row.get("status") in ("entry_open", "exiting", "exit_pending"):
+        why.append("pre-market " + str(row.get("symbol")) + " " + str(row.get("status")))   # no single quotes in here: this runs inside python3 -c
 sw = d.get("swing") or {}
 today, clock = d.get("now_et", "")[:10], d.get("now_et", "")[11:16]
 if sw.get("busy"):
     why.append("swing is rebalancing")
-elif (sw.get("model") or {}).get("for_day") == today and sw.get("last_run") != today and "08:00" <= clock < "14:50":
-    why.append("swing has not traded today yet (it trades at 09:36 ET)")
+elif (sw.get("model") or {}).get("for_day") == today and sw.get("last_run") != today and "09:34" <= clock < "09:50":
+    why.append("swing rebalance is due now (09:36 ET)")  # before it, swing simply prepares and trades after the restart
 if d.get("positions"):
     why.append("intraday positions")
-live = [o for o in d.get("orders", []) if o.get("status") not in ("FILLED", "CANCELED", "REJECTED", "REPLACED")]
+live = [o for o in d.get("orders", []) if o.get("status") not in ("FILLED", "CANCELED", "REJECTED", "REPLACED")
+        and not (o.get("tag") == "scalp-pre-target" and o.get("symbol") in held)]
 if live:
     why.append(f"{len(live)} order(s) working")
 print("; ".join(why))

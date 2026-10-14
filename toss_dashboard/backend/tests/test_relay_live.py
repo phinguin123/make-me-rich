@@ -1,6 +1,5 @@
 """The live intraday relay: stocks-in-play trading the scalp pot's free cash on semis-uptrend days."""
 import json
-from dataclasses import replace
 from datetime import datetime
 
 from trader.broker import Order
@@ -15,7 +14,7 @@ TODAY = datetime.now(ET).date()
 
 
 def make(tmp_path, relay=True):
-    e = Engine(Settings(mode="paper", capital=0.0, swing_capital=0.0, scalp_capital=3720.0, relay=relay, relay_regime="risk_on",
+    e = Engine(Settings(mode="paper", capital=0.0, swing_capital=0.0, scalp_capital=3720.0, relay=relay,
                         scalp_force_day="", scalp_position_frac=1.0, pre_names=("SOXL",), pre_slots=1, pre_qqq_filter=False))
     e.state_path, e.trades_path = tmp_path / "state.json", tmp_path / "trades.jsonl"  # never touch the real data folder
     e.scalp.path, e.edges.path = tmp_path / "scalp.json", tmp_path / "edges.json"
@@ -33,7 +32,7 @@ def regime(e, regime, status):
 
 def test_relay_profile_and_the_uptrend_gate(tmp_path):
     e = make(tmp_path)
-    assert e.relay and e.cfg.exit_mode == "eod" and e.cfg.min_atr_pct == 0.05 and e.cfg.regime == "risk_on"
+    assert e.relay and e.cfg.exit_mode == "eod" and e.cfg.min_atr_pct == 0.05 and e.cfg.regime == "none"
     assert not e.relay_on(TODAY)  # the breakout's regime isn't loaded yet
     regime(e, "bull", "standing_aside")
     assert e.relay_on(TODAY)
@@ -41,7 +40,6 @@ def test_relay_profile_and_the_uptrend_gate(tmp_path):
     assert not e.relay_on(TODAY)  # the breakout owns the pot
     regime(e, "bull", "waiting")
     assert not e.relay_on(TODAY)  # a one-day override that trades the breakout in an uptrend
-    e.cfg = replace(e.cfg, regime="none")  # past the QQQ/VIXY filter, to reach the relay's own checks
     assert "relay" in e._entry_block_reason()
     regime(e, "bull", "standing_aside")
     assert e._entry_block_reason() == ""

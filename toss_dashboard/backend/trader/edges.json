@@ -34,19 +34,19 @@
       "trials": 200
     },
     "intraday-orb": {
-      "label": "Relay: stocks-in-play breakout (bigger-swing, risk-on, closed by 16:00)",
+      "label": "Relay: stocks-in-play breakout (bigger-swing, closed by 16:00)",
       "source": "research/backtest.py via intraday_relay.BIGGER",
-      "mean": 0.00627,
-      "std": 0.08062,
-      "n": 434,
-      "per_year": 160.3,
-      "dd_reduce": -0.3773,
-      "dd_off": -0.5635,
-      "period": "2024-01 .. 2026-09",
+      "mean": 0.00302,
+      "std": 0.05643,
+      "n": 1261,
+      "per_year": 462.0,
+      "dd_reduce": -0.8097,
+      "dd_off": -1.2135,
+      "period": "2024-01 .. 2026-10",
       "slip_model": 0.0005,
-      "sharpe_trade": 0.0777,
-      "sr0": 0.0586,
-      "dsr": 0.8221,
+      "sharpe_trade": 0.0536,
+      "sr0": 0.0491,
+      "dsr": 0.6019,
       "trials": 250
     }
   }

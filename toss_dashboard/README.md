@@ -871,7 +871,7 @@ T-bills.
   the whole pot.
 - **Semis uptrend** (the breakout stands aside): the engine's stocks-in-play breakout scans at 09:35:10
   and enters until 11:30. It uses the bigger-swing profile (ATR ≥ 5%, `TRADER_RELAY_REGIME`, default
-  `risk_on`) and closes everything by 15:57, so the pot is flat for the next pre-market.
+  `none`) and closes everything by 15:57, so the pot is flat for the next pre-market.
 
 **Money rules:**
 - Each entry risks 1% of the pot to its ATR stop (`TRADER_RELAY_RISK`), capped at 35% of the pot
@@ -889,14 +889,27 @@ T-bills.
 - The replay check verifies the handoff on every replayed day: the book is flat and the whole pot is
   free cash by 09:59 (downtrend) or 10:30 (uptrend). A planted late-exit bug fails it.
 
-**Regime filter.** The live default is `risk_on`: entries only while QQQ is above its VWAP and VIXY is
-below its open. On 30/70, 2024–26:
-- `risk_on`: +76.3%/yr, Sharpe 2.49, max DD −12.8%, 294 stocks-in-play trades. It added +49% a year
-  to the pot before July 2025, but only +6% after.
-- `none`: +83.6%/yr, Sharpe 2.55, max DD −16.1%, 866 trades. It held up after July 2025 (+36% then
-  +56% a year).
-- To switch, set `TRADER_RELAY_REGIME=none` in `.env`, re-run `python -m trader.research.edge_stats`
-  (the `intraday-orb` expectations are for `risk_on`), and deploy.
+**Regime filter: `none` (since 2026-10-14).** Inside the relay the stocks-in-play leg is already gated by
+the semis uptrend (SOXX above its 50-day), each stock above its own 50-day average, and a green first
+5 minutes. On 30/70, 2024–26:
+- `none` (live): +83.6%/yr, Sharpe 2.55, max DD −16.1%, 866 stocks-in-play trades. It held up after July
+  2025 (+36% then +56% a year added to the pot).
+- `risk_on` (QQQ above VWAP and VIXY below its open): +76.3%/yr, Sharpe 2.49, max DD −12.8%, 294 trades.
+  It faded after July 2025 (+49% then +6% a year).
+- The multiple-testing check is weaker for `none`: Deflated Sharpe 0.60, vs 0.82 for `risk_on`. Each
+  trade's edge is thin (+0.30% on 5.6% noise), so the edge monitor needs many trades to tell a fade
+  from noise.
+- To switch, set `TRADER_RELAY_REGIME` in `.env`, re-run `python -m trader.research.edge_stats` (it
+  writes the `intraday-orb` expectations for the default), and deploy.
+
+**Restarts.** A deploy right after the 09:00 ET (22:00 KST) entry cutoff is safe even with book positions
+held:
+- The position and its resting take-profit (a DAY order) are re-attached by order id. The startup
+  cleanup keeps the order, and a fill that happened while the bot was down is read back
+  (`tests/test_restart.py`).
+- The deploy script lets an `in_trade` position with its own take-profit through. It still refuses
+  resting entries, exits in progress, swing's 09:36 rebalance window, open relay positions and any
+  other working order.
 
 **Research behind it (2026-10-14):**
 
@@ -946,7 +959,7 @@ Expectations live in `trader/edges.json`; regenerate them after re-running resea
 |---|---|---|---|---|---|---|
 | Opening-range breakout (bear regime) | +0.33% | 4.3% | ~90 | −55% | −82% | **0.29** (60 tries) |
 | Pre-market dip book (14 names, 3 slots, 10:30 exit) | +0.95% | 2.2% | ~119 | −22% | −33% | 0.999 (200 tries) |
-| Relay stocks-in-play (bigger-swing, risk-on, closed by 16:00) | +0.63% | 8.1% | ~160 alone | −38% | −56% | 0.82 (250 tries) |
+| Relay stocks-in-play (bigger-swing, no regime filter, closed by 16:00) | +0.30% | 5.6% | ~460 alone | −81% | −121% | **0.60** (250 tries) |
 
 **Multiple-testing check (added 2026-10-14).** The Deflated Sharpe Ratio (Bailey & López de Prado
 2014) is the chance the per-trade edge is real after allowing for how many configurations the

@@ -11,19 +11,27 @@
       "dd_reduce": -0.5501,
       "dd_off": -0.8192,
       "period": "2021-01 .. 2026-09",
-      "slip_model": 0.0003
+      "slip_model": 0.0003,
+      "sharpe_trade": 0.0772,
+      "sr0": 0.1002,
+      "dsr": 0.2949,
+      "trials": 60
     },
     "scalp-pre": {
       "label": "Pre-market dip book (14 names, 3 slots, QQQ filter)",
       "source": "research/pre_slots.py pessimistic",
-      "mean": 0.00963,
-      "std": 0.02172,
+      "mean": 0.00952,
+      "std": 0.02187,
       "n": 614,
       "per_year": 119.0,
-      "dd_reduce": -0.2214,
-      "dd_off": -0.3306,
+      "dd_reduce": -0.223,
+      "dd_off": -0.3336,
       "period": "2021-08 .. 2026-10",
-      "slip_model": 0.0
+      "slip_model": 5.7e-05,
+      "sharpe_trade": 0.4353,
+      "sr0": 0.2083,
+      "dsr": 0.9987,
+      "trials": 200
     }
   }
 }

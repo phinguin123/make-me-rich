@@ -868,10 +868,22 @@ switched off when live results fall clearly outside what the backtest allows.
 Expectations live in `trader/edges.json`; regenerate them after re-running research with
 `python -m trader.research.edge_stats`.
 
-| Edge | Backtest avg/trade | Std/trade | Trades/yr | Half size at drawdown | Off at drawdown |
-|---|---|---|---|---|---|
-| Opening-range breakout (bear regime) | +0.33% | 4.3% | ~90 | −55% | −82% |
-| Pre-market SOXL dip (corrected) | +0.35% | 2.5% | ~22 | −17.5% | −28.6% |
+| Edge | Backtest avg/trade | Std/trade | Trades/yr | Half size at drawdown | Off at drawdown | Deflated Sharpe |
+|---|---|---|---|---|---|---|
+| Opening-range breakout (bear regime) | +0.33% | 4.3% | ~90 | −55% | −82% | **0.29** (60 tries) |
+| Pre-market dip book (14 names, 3 slots, 10:30 exit) | +0.95% | 2.2% | ~119 | −22% | −33% | 0.999 (200 tries) |
+
+**Multiple-testing check (added 2026-10-14).** The Deflated Sharpe Ratio (Bailey & López de Prado
+2014) is the chance the per-trade edge is real after allowing for how many configurations the
+research tried before picking it, plus the returns' skew and fat tails.
+- The book passes easily.
+- The breakout does not. Its per-trade Sharpe (0.077) is below what the best of 60 lucky tries would
+  show (0.100). It would pass only if it had been the first and only idea tested (0.96); with 20 tries
+  it scores 0.44.
+- Its out-of-sample half was positive (+0.30%/trade), which this check doesn't credit. Still, treat
+  the breakout as the weakest-evidenced edge, and judge it on live results.
+- Since 2026-10-14 the book's research also charges 0.05% slippage on the time exit (a market order),
+  so `slip_model` is no longer 0: 0.006% per fill on average.
 
 **Rules.** Drawdown is the sum of per-trade returns on the position from its peak. At 50%
 sizing, the account sees half of it. The two limits are the worst one-year runs that only 10% and

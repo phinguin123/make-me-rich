@@ -65,6 +65,23 @@ def test_slots_limit_positions_and_free_up(tmp_path):
     assert st["AAA"].qty == 0 and st["CCC"].qty > 0
 
 
+def test_resting_entries_reserve_cash(tmp_path):
+    sleeve, md, broker = make(tmp_path, slots=3)
+    st = ready(sleeve, md)
+    a = md.get("AAA")  # a print through AAA's level with the ask above our limit: the entry rests
+    a.last, a.last_ts, a.bid, a.ask = round(st["AAA"].level * 0.996, 2), datetime.now(ET), round(st["AAA"].level * 0.995, 2), st["AAA"].level + 0.10
+    sleeve.equity = lambda: 3600.0  # positions elsewhere gained, so a third of equity is more than a third of the cash
+    tp.tick(sleeve, tp.at(7, 31, 10))
+    assert st["AAA"].status == "entry_open" and st["AAA"].qty == 0
+    reserved = sleeve.pre.reserved_cash()["AAA"]
+    assert 1100 < reserved < 1250  # ~a third of $3,600, not yet spent
+    sleeve.cash = 1500.0  # cash already used by an open position
+    quote(md, "BBB", round(st["BBB"].level * 0.995, 2))  # BBB dips and is marketable
+    tp.tick(sleeve, tp.at(7, 31, 20))
+    assert 0 < st["BBB"].qty * st["BBB"].entry <= 1500.0 - reserved + 1  # only the cash AAA can't still spend
+    assert sleeve.pre.reserved_cash().keys() == {"AAA"}  # BBB filled: nothing left to reserve
+
+
 def test_qqq_downtrend_stands_aside(tmp_path):
     sleeve, md, _ = make(tmp_path, qqq_up=False)
     st = ready(sleeve, md)

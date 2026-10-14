@@ -255,12 +255,16 @@ class PremarketDip:
         level = self.st.level
         sl = self.sl
         frac = sl.cfg.position_frac * sl.edge_size("scalp-pre") / max(1, self.cfg.slots)
-        qty = math.floor(min(frac * sl.equity(), sl.cash, await sl.broker.cash()) / (level * (1 + sl.broker.commission)))
+        broker_cash = await sl.broker.cash()
+        # From here to the submit nothing awaits, so another name's entry can't size in between. Cash that other
+        # names' resting entries may still spend is not free (sl.cash only drops when they fill).
+        held = sum(v for s, v in self.book.reserved_cash().items() if s != self.SYMBOL)
+        qty = math.floor(min(frac * sl.equity(), sl.cash - held, broker_cash) / (level * (1 + sl.broker.commission)))
         if qty < 1 or not sl.allow_order(False):
             self.st.status, self.st.note = "done", "size < 1 share or order throttle"
             return
         self.st.attempts += 1
-        self.st.status = "entry_open"
+        self.st.status, self.st.entry_qty = "entry_open", qty  # reserves the cash until the entry finishes
         jr("D", "pre", "trigger", {"sym": self.SYMBOL, "level": level, "last": sl.market.get(self.SYMBOL).last, "vwap": self.st.vwap, "qty": qty,
                                    "attempt": self.st.attempts})
         self._log(f"BUY {qty} @ {level} limit (dip {self.st.dip:.2%} below VWAP {self.st.vwap:.2f})")
@@ -423,6 +427,12 @@ class PremarketBook:
     def slot_free(self) -> bool:
         used = {s for s, n in self.names.items() if n.active()} | self.reserved
         return len(used) < self.cfg.slots
+
+    def reserved_cash(self) -> dict[str, float]:
+        """Cash the resting entries may still spend: the unfilled part of each, at its limit plus fees."""
+        fee = 1 + self.sl.broker.commission
+        return {s: max(0.0, n.st.entry_qty - n.st.qty) * n.st.level * fee
+                for s, n in self.names.items() if n.st.status == "entry_open"}
 
     def exit_time(self, today: date) -> datetime:
         """When leftovers are sold: 10:30 ET, or 09:59 on days the breakout may buy from 10:00 (it sizes from the pot's cash)."""

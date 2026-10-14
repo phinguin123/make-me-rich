@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from .pre_multi import matrices
-from .scalp_ext import D, ET, _dip_trade, net
+from .scalp_ext import D, ET, SLIP, _dip_trade, net
 
 NAMES = ["SOXL", "SOXS", "NVDA", "MU", "AMD", "TSLA", "MSTR", "PLTR", "COIN", "META", "AAPL", "AMZN", "TSLL", "NVDL"]
 EXIT_M, EXIT_ORB_M = 390, 359  # leftovers sold at 10:30 ET; 09:59 on days the breakout may trade (live: scalp_pre.PreConfig)
@@ -36,10 +36,11 @@ def soxx_bear() -> pd.Series:
 
 
 def all_trades(mats: dict, model: str, e0: int = 30, bear: pd.Series | None = None,
-               exit_m: int = EXIT_M, exit_orb: int = EXIT_ORB_M) -> pd.DataFrame:
+               exit_m: int = EXIT_M, exit_orb: int = EXIT_ORB_M, exit_slip: float = SLIP["pre"]) -> pd.DataFrame:
     """e0 = first entry minute after 04:00 ET (30 = 04:30, the live start; 180 = 07:00, the old one).
     Leftovers are sold at minute exit_m (390 = 10:30), or exit_orb (359 = 09:59) on breakout days (`bear`,
-    by default soxx_bear()). exit_m = exit_orb = 325 is the old 09:25 exit."""
+    by default soxx_bear()). exit_m = exit_orb = 325 is the old 09:25 exit. The time exit is a market order:
+    it pays `exit_slip`; entries and take-profits are limit orders (no slippage)."""
     if bear is None and exit_m != exit_orb:
         bear = soxx_bear()
     rows = []
@@ -57,9 +58,11 @@ def all_trades(mats: dict, model: str, e0: int = 30, bear: pd.Series | None = No
                 continue
             flag = bear.get(d) if bear is not None else False
             ex = exit_orb if (flag is True or flag == 1) else exit_m
-            r = _dip_trade(c, lo, hi, np.nan_to_num(v), first[0], min(0.06, max(0.015, 0.4 * s)), model, e0=e0, exit_i=ex, detail=True)
+            r = _dip_trade(c, lo, hi, np.nan_to_num(v), first[0], min(0.06, max(0.015, 0.4 * s)), model, e0=e0, exit_i=ex,
+                           detail=True, exit_slip=exit_slip)
             if r is not None:
-                rows.append({"date": d, "sym": sym, "j": r[1], "q": r[2], "net": float(net([r[0]], "pre", limit=True)[0])})
+                rows.append({"date": d, "sym": sym, "j": r[1], "q": r[2], "net": float(net([r[0]], "pre", limit=True)[0]),
+                             "time_exit": r[2] == ex})
     return pd.DataFrame(rows)
 
 

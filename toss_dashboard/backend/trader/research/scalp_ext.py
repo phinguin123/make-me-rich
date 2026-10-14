@@ -256,10 +256,11 @@ def premarket_edges():
         show(labels[k], g_, "pre", limit=k.startswith("p4"), dates=d_)
 
 
-def _dip_trade(c, lo, hi, vol, start, kk, model, e0=180, e1=300, exit_i=325, thru=0.003, rest=10, detail=False):
+def _dip_trade(c, lo, hi, vol, start, kk, model, e0=180, e1=300, exit_i=325, thru=0.003, rest=10, detail=False, exit_slip=0.0):
     """One pre-market dip trade. model: level (filled at the level on a 0.3% trade-through),
     reactive (bar close if still below, else rest 10 min needing a close below), pessimistic
-    (filled only when a bar closes below the level, at the level)."""
+    (filled only when a bar closes below the level, at the level). exit_slip: slippage on the time exit
+    (a market order; entries and take-profits are limit orders)."""
     typ = (hi + lo + c) / 3
     # minutes without a bar count as zero volume (a NaN here used to blank the VWAP for the rest of the day
     # and silently skip that day; the live bot skips empty minutes, so research must too)
@@ -288,7 +289,7 @@ def _dip_trade(c, lo, hi, vol, start, kk, model, e0=180, e1=300, exit_i=325, thr
         if buy is None:
             j += 1
             continue
-        ex, xq = c[exit_i], exit_i
+        ex, xq = c[exit_i] * (1 - exit_slip), exit_i
         for q in range(j + 1, exit_i + 1):
             if np.isfinite(hi[q]) and hi[q] >= buy * (1 + kk) * 1.0005:
                 ex, xq = buy * (1 + kk), q

@@ -29,6 +29,12 @@ export default function EdgePanel({ edges, onEnable, busy }) {
                 <td className={`px-3 py-1.5 ${signClass(e.live.mean)}`}>{e.live.n ? pct(e.live.mean) : "—"}</td>
                 <td className="px-3 py-1.5 text-zinc-400">
                   {e.backtest?.mean != null ? `${pct(e.backtest.mean)} (${e.backtest.n} trades, ~${Math.round(e.backtest.per_year)}/yr)` : "—"}
+                  {e.backtest?.dsr != null && (
+                    <span className={e.backtest.dsr >= 0.95 ? "text-zinc-500" : "text-amber-400"}
+                          title={`Deflated Sharpe ratio: chance the edge is real after ${e.backtest.trials} configurations were tried`}>
+                      {" "}· DSR {num(e.backtest.dsr, 2)}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-1.5 text-zinc-200">{e.live.n ? num(e.live.z, 1) : "—"}</td>
                 <td className="px-3 py-1.5 text-zinc-200">

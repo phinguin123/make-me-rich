@@ -861,6 +861,43 @@ T-bills.
   2016–2026, against the swing sleeve's 1.12 and −20% in 2019–2026. The swing sleeve's
   history is shorter, though.
 
+## Intraday relay (research 2026-10-14, not live: `research/intraday_relay.py`)
+
+The scalp pot as one daily relay:
+1. The pre-market book, unchanged (10:30 exit; 09:59 on breakout days).
+2. In semis downtrends, the SOXL/SOXS breakout uses the whole pot from 10:00, as now.
+3. In semis uptrends, the stocks-in-play breakout (entries 09:35–11:30, closed by 16:00) uses only cash
+   that's free at each entry: unused slots, book trades whose take-profit filled, and from 10:30 the
+   book's time-exit proceeds.
+
+Whole shares, Toss fees, yearly rebalance, start $12,400. The stocks-in-play data starts in 2024, so
+2021–23 is the same as now.
+
+| Plan | 2021–26 CAGR / Sharpe / max DD | 2024–26 CAGR / Sharpe / max DD |
+|---|---|---|
+| Now: 30% scalp / 70% swing (vol 20%) | +40.2% / 1.81 / −16.6% | +59.0% / 2.47 / −12.4% |
+| 30% relay, safe profile / 70% swing | +45.2% / 1.89 / −16.6% | +71.0% / 2.58 / −12.4% |
+| 30% relay, bigger-swing profile / 70% swing | +50.2% / 1.91 / −16.6% | +83.6% / 2.55 / −16.1% |
+| 35% relay, safe / 65% swing at vol 28% | +52.4% / 1.81 / −18.5% | +80.6% / 2.43 / −15.6% |
+| 35% relay, bigger-swing / 65% swing at vol 28% | +58.1% / 1.85 / −18.5% | +95.1% / 2.43 / −17.6% |
+| (now, but swing at vol 28%) | +44.2% / 1.68 / −18.8% | +63.2% / 2.22 / −15.0% |
+
+- **The relay adds return without adding drawdown.** Stocks-in-play's daily results are uncorrelated
+  with the book's (≈ 0.00), and they rarely compete for cash: 6 (safe) and ~60 (bigger-swing) entries
+  in 2.75 years were skipped because the pot was busy.
+- **Swing at a 28% volatility target is leverage, not an edge.** The Sharpe falls (1.81 to 1.68 on
+  today's plan) and drawdowns deepen.
+- **Caveat: only 2.75 years of stocks-in-play data, mostly a bull market.** Results before and after
+  July 2025, the backtest's own split:
+  - The safe profile faded: +1.49% then +0.27% per trade; it added +32.6% then +5.1% a year to the pot.
+  - Bigger-swing held up: +0.27% then +0.32% per trade (+36.5% then +56.8% a year to the pot). But its
+    stand-alone max drawdown was −19%, and its 2024–25 Sharpe only 0.68.
+  - Both profiles were compared after the later data existed, so neither held-out result is perfectly
+    clean.
+- The relay closes stocks-in-play by 16:00 instead of holding strong winners overnight, so the pot is
+  flat for the next pre-market. That costs the safe profile a little (+0.46% vs +0.27% per trade after
+  July 2025).
+
 ## Edge health monitor (`trader/edges.py`)
 
 Each live edge's closed trades are compared with its backtest, and the edge is sized down or

@@ -207,6 +207,8 @@ def relay_account(days, share, swing_r, book, bear, orb, sip: dict | None, p, st
                 free -= cost
                 info["sip_n"] += 1
                 info["sip_pnl_is" if d < SPLIT else "sip_pnl_oos"] += proceeds - cost
+                info.setdefault("by_year", {}).setdefault(d.year, 0.0)
+                info["by_year"][d.year] += proceeds - cost
                 pos = {"symbol": tr["symbol"], "exit_day": tr["exit_day"], "exit_min": tr["exit_min"], "cost": cost, "proceeds": proceeds}
                 if tr["exit_day"] > d:
                     carried.append(pos)

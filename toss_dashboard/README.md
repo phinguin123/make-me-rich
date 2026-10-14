@@ -902,6 +902,28 @@ the semis uptrend (SOXX above its 50-day), each stock above its own 50-day avera
 - To switch, set `TRADER_RELAY_REGIME` in `.env`, re-run `python -m trader.research.edge_stats` (it
   writes the `intraday-orb` expectations for the default), and deploy.
 
+**Five-year check (2022-01 .. 2026-10, `research/relay_5y.py`).** The stocks-in-play data was backfilled for
+2022–23 by `research/backfill.py`: staged separately, then merged with backups; delisted symbols included.
+Live rule: bigger-swing, regime `none`, semis-uptrend days only.
+
+| Year | Stocks-in-play avg/trade (n) | Account 30/70: now / with relay | Stocks-in-play P&L in the account |
+|---|---|---|---|
+| 2022 | +0.42% (202) | +30.6% / **+39.6%** | +$986 |
+| 2023 | −0.02% (248) | +37.6% / +36.7% | +$368 |
+| 2024 | +0.13% (215) | +109.1% / +117.8% | +$1,517 |
+| 2025 | +0.30% (400) | +47.5% / +68.1% | +$8,002 |
+| 2026 | +0.52% (319) | +14.9% / +43.2% | +$31,568 |
+
+- **Five years, 30/70:** +47.7%/yr, Sharpe 2.01, max DD −16.6% now, vs +62.5%/yr, Sharpe 2.15, max DD −15.8%
+  with the relay.
+- **2022's bear-market rallies were good for it:** 192 of its 202 trades came while QQQ was below its
+  200-day average, averaging +0.45%.
+- **A QQQ > 200-day filter on the stocks-in-play leg hurts.** It removes those trades (2022 becomes −$47)
+  and trims 2024–26: +60.2%/yr, Sharpe 2.11, max DD −16.6%. Not adopted.
+- **The `risk_on` filter was worse in 2022–23 too** (−0.06%, −0.08% per trade): +56.3%/yr, Sharpe 2.05.
+- **Deflated Sharpe over five years: 0.63** (1,330 trades, +0.29%/trade, 304 trials). The per-trade edge
+  is thin; the gain comes from many trades on otherwise idle cash, so the edge monitor stays the safeguard.
+
 **Restarts.** A deploy right after the 09:00 ET (22:00 KST) entry cutoff is safe even with book positions
 held:
 - The position and its resting take-profit (a DAY order) are re-attached by order id. The startup
